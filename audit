@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""audit — query the job-triage audit trail.
+
+Usage:
+    ./audit [email|telegram] [--last N] [--since TS] [--today] [--content] [--verbose]
+
+Without arguments, shows the last 3 entries from both pipelines.
+Pass --help for full usage.
+"""
+import argparse
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+PROJECT = os.path.dirname(os.path.abspath(__file__))
+STATE = os.path.join(PROJECT, "state")
+AUDIT_DIR = os.path.join(STATE, "audit")
+
+SOURCES = {"email": "email.jsonl", "telegram": "telegram.jsonl"}
+FEEDBACK_FILE = os.path.join(STATE, "feedback.jsonl")
+REF_MAP_FILE = os.path.join(STATE, "ref-map.jsonl")
+
+# ── feedback ─────────────────────────────────────────────────────
+
+def load_feedback():
+    """Return dict mapping internal msg_id → list of reaction records."""
+    ref_map = {}
+    if os.path.exists(REF_MAP_FILE):
+        with open(REF_MAP_FILE) as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    ref_map[r["tg_msg_id"]] = r["ref"]
+    feedback = {}
+    if os.path.exists(FEEDBACK_FILE):
+        with open(FEEDBACK_FILE) as f:
+            for line in f:
+                if line.strip():
+                    fb = json.loads(line)
+                    tg_id = fb["tg_msg_id"]
+                    ref = ref_map.get(tg_id, tg_id)
+                    feedback.setdefault(ref, []).append(fb)
+    return feedback
+
+# ── rendering ───────────────────────────────────────────────────
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[2m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+CYAN = "\033[36m"
+
+DECISION_COLORS = {
+    "send": GREEN, "flag": YELLOW, "read": CYAN, "relevant": YELLOW,
+    "skip": DIM, "irrelevant": DIM,
+    "error": RED, "next": DIM,
+}
+
+
+def color_decision(d):
+    c = DECISION_COLORS.get(d, "")
+    return f"{c}{d}{RESET}" if c else d
+
+
+def fmt_ts(ts):
+    """Human-friendly timestamp."""
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        return dt.strftime("%b %d %H:%M")
+    except ValueError:
+        return ts
+
+
+def print_record(r, feedback=None, show_content=False, verbose=False):
+    """Print a single audit record, omitting body by default."""
+    source = r.get("source", "?")
+    sender = r.get("sender", "?")
+    preview = r.get("preview", "?")
+    arrived = r.get("arrived_at", "?")
+    msg_id = r.get("msg_id", "?")
+    stage = r.get("stage", "")
+    pro_decision = r.get("pro", {}).get("decision")
+
+    print(f"{BOLD}{fmt_ts(arrived)}  {source}  {sender}{RESET}")
+    print(f"  {preview}")
+    if stage:
+        print(f"  stage: {stage}")
+
+    for label, key in [("flash", "flash"), ("pro", "pro")]:
+        decision = r.get(key)
+        if not decision:
+            continue
+        dec = decision.get("decision", "?")
+        reason = decision.get("reason", "")
+        dec_at = decision.get("at", "")
+        model = decision.get("model", "")
+        line_info = ""
+        if "line" in decision:
+            line_info = f" line {decision['line']}/{decision.get('of','?')}"
+        meta_parts = []
+        if model:
+            meta_parts.append(model)
+        if dec_at:
+            meta_parts.append(fmt_ts(dec_at))
+        meta = f" ({', '.join(meta_parts)})" if meta_parts else ""
+        print(f"  {label}: {color_decision(dec)}{line_info}{meta}")
+        if reason:
+            print(f"    {DIM}{reason}{RESET}")
+
+    # Feedback
+    if feedback and pro_decision == "send":
+        for fb in feedback:
+            rxns = " ".join(fb.get("reactions", []))
+            fb_at = fmt_ts(fb.get("at", ""))
+            if "👍" in rxns:
+                tag = f"{GREEN}confirmed{RESET}"
+            elif "👎" in rxns:
+                tag = f"{RED}corrected{RESET}"
+            else:
+                tag = rxns
+            print(f"  feedback: {tag} ({rxns} at {fb_at})")
+
+    if show_content and "content" in r:
+        body = r["content"]
+        print(f"  {BOLD}body:{RESET} ({len(body)} chars)")
+        if not verbose:
+            body = body[:500] + ("..." if len(body) > 500 else "")
+        print(f"    {DIM}{body}{RESET}")
+
+    print()
+
+
+def print_summary(records, label, feedback=None):
+    """Print aggregate stats for a set of records."""
+    if not records:
+        print(f"{label}: no records\n")
+        return
+
+    total = len(records)
+    unique = len(set(r.get("msg_id", i) for i, r in enumerate(records)))
+    decisions = {}
+    for r in records:
+        for stage in ("flash", "pro"):
+            if stage in r:
+                d = r[stage]["decision"]
+                decisions.setdefault(stage, {}).setdefault(d, 0)
+                decisions[stage][d] += 1
+
+    sends = [r for r in records if "pro" in r and r["pro"]["decision"] == "send"]
+    errors = [r for r in records if ("flash" in r and r["flash"]["decision"] == "error")
+              or ("pro" in r and r["pro"]["decision"] == "error")]
+
+    print(f"{BOLD}{label}{RESET}: {total} records, {unique} unique messages")
+    for stage, counts in decisions.items():
+        parts = "  ".join(f"{color_decision(k)}:{v}" for k, v in sorted(counts.items()))
+        print(f"  {stage}: {parts}")
+    if sends:
+        print(f"  {GREEN}sends: {len(sends)}{RESET}")
+    if errors:
+        print(f"  {RED}errors: {len(errors)}{RESET}")
+
+    # feedback stats for this source's sends
+    if feedback and sends:
+        fb_sends = 0
+        fb_confirmed = 0
+        fb_corrected = 0
+        for r in sends:
+            fb_list = feedback.get(r.get("msg_id", ""))
+            if fb_list:
+                fb_sends += 1
+                for fb in fb_list:
+                    rxns = " ".join(fb.get("reactions", []))
+                    if "👍" in rxns:
+                        fb_confirmed += 1
+                    elif "👎" in rxns:
+                        fb_corrected += 1
+        if fb_sends:
+            total_fb = fb_confirmed + fb_corrected
+            print(f"  feedback: {total_fb} reactions on {fb_sends}/{len(sends)} sends "
+                  f"({GREEN}{fb_confirmed} confirmed{RESET}, {RED}{fb_corrected} corrected{RESET})")
+    print()
+
+
+# ── filtering ───────────────────────────────────────────────────
+
+def load_records(source, since=None, last=None, today=False):
+    """Load records from source, filtered by time window or count."""
+    path = os.path.join(AUDIT_DIR, SOURCES[source])
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        records = [json.loads(l) for l in f if l.strip()]
+
+    if today:
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        records = [r for r in records
+                   if (r.get("arrived_at", "")[:10] == today_str
+                       or r.get("flash", {}).get("at", "")[:10] == today_str
+                       or r.get("pro", {}).get("at", "")[:10] == today_str)]
+
+    if since:
+        records = [r for r in records
+                   if (r.get("arrived_at", "") >= since
+                       or r.get("flash", {}).get("at", "") >= since
+                       or r.get("pro", {}).get("at", "") >= since)]
+
+    if last:
+        records = records[-last:]
+
+    return records
+
+
+def load_all(since=None, last=None, today=False):
+    """Load from both sources, interleaved by arrival time."""
+    records = []
+    for src in SOURCES:
+        records.extend(load_records(src, since=since, last=None, today=today))
+    records.sort(key=lambda r: r.get("arrived_at", ""))
+    if last:
+        records = records[-last:]
+    return records
+
+
+# ── main ────────────────────────────────────────────────────────
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="audit",
+        description="Query the job-triage audit trail.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""Examples:
+  ./audit                     last 3 from both pipelines
+  ./audit email               last 3 email decisions
+  ./audit --today             everything from today
+  ./audit email --since 2026-05-18   email since midnight UTC
+  ./audit --last 10           last 10 records
+  ./audit --summary           aggregate stats only
+  ./audit email --content     include full bodies""",
+    )
+    p.add_argument("source", nargs="?", choices=["email", "telegram"],
+                   help="pipeline to query (default: both)")
+    p.add_argument("--last", "-n", type=int, default=3,
+                   help="show last N records (default: 3)")
+    p.add_argument("--since", metavar="TS",
+                   help="filter to records at or after timestamp (ISO 8601)")
+    p.add_argument("--today", action="store_true",
+                   help="show today's records (overrides --last)")
+    p.add_argument("--content", "-c", action="store_true",
+                   help="include message bodies")
+    p.add_argument("--summary", "-s", action="store_true",
+                   help="show aggregate stats only")
+    p.add_argument("--verbose", "-v", action="store_true",
+                   help="show full bodies and extra fields")
+    args = p.parse_args()
+
+    if args.today or args.summary:
+        args.last = None
+
+    feedback = load_feedback()
+
+    sources = [args.source] if args.source else list(SOURCES)
+
+    for src in sources:
+        records = load_records(src, since=args.since,
+                               last=args.last, today=args.today)
+        if args.summary:
+            print_summary(records, src, feedback)
+        else:
+            src_label = f"{src} ({len(records)} records)"
+            print(f"{BOLD}══ {src_label}{RESET}\n")
+            if not records:
+                print(f"  {DIM}no matching records{RESET}\n")
+            for r in records:
+                fb = feedback.get(r.get("msg_id", ""))
+                print_record(r, feedback=fb, show_content=args.content,
+                             verbose=args.verbose)
+
+    if not args.summary:
+        # cursors + feedback presence
+        print(f"{DIM}── cursors{RESET}")
+        for cursor_name, src in [("email", "email-cursor"),
+                                  ("it_jobs_cyprus", "it-jobs-cursor"),
+                                  ("cyithr", "cyithr-cursor")]:
+            cursor_path = os.path.join(STATE, src)
+            if os.path.exists(cursor_path):
+                val = open(cursor_path).read().strip()
+                print(f"  {DIM}{cursor_name}: {val}{RESET}")
+        if feedback:
+            total = sum(len(v) for v in feedback.values())
+            confirmed = sum(1 for v in feedback.values()
+                           for fb in v if "👍" in " ".join(fb.get("reactions", [])))
+            corrected = total - confirmed
+            print(f"  {DIM}feedback: {total} reactions ({GREEN}{confirmed} confirmed{RESET}{DIM}, {RED}{corrected} corrected{RESET}{DIM}) for {len(feedback)} messages{RESET}")
+
+
+if __name__ == "__main__":
+    main()
