@@ -253,14 +253,26 @@ def main() -> None:
         email_content = ""
 
         # --- Flash ---
-        try:
-            decision, reason = flash_header_triage(from_addr, subject, api_key)
-        except Exception as e:
-            logging.error("[email] flash error: %s", e)
-            record["flash"] = {"model": FLASH_MODEL, "decision": "error", "reason": str(e),
+        flash_error = None
+        for flash_attempt in range(3):
+            try:
+                decision, reason = flash_header_triage(from_addr, subject, api_key)
+                flash_error = None
+                break
+            except Exception as e:
+                flash_error = e
+                if flash_attempt < 2:
+                    logging.warning("[email] flash error (attempt %d/3): %s",
+                                    flash_attempt + 1, e)
+                    time.sleep(2 ** flash_attempt)
+
+        if flash_error:
+            logging.error("[email] flash error after 3 attempts: %s", flash_error)
+            record["flash"] = {"model": FLASH_MODEL, "decision": "error",
+                               "reason": str(flash_error),
                                "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
             write_audit(record, AUDIT_FILE)
-            last_received = received
+            # don't advance cursor — retry on next run
             continue
 
         record["flash"] = {"model": FLASH_MODEL, "decision": decision, "reason": reason,
@@ -277,14 +289,26 @@ def main() -> None:
                 write_audit(record, AUDIT_FILE)
                 continue
 
-            try:
-                bd, br, bm = pro_body_triage(from_addr, subject, body_text, api_key)
-            except Exception as e:
-                logging.error("[email] pro error: %s", e)
-                record["pro"] = {"model": PRO_MODEL, "decision": "error", "reason": str(e),
+            pro_error = None
+            for pro_attempt in range(3):
+                try:
+                    bd, br, bm = pro_body_triage(from_addr, subject, body_text, api_key)
+                    pro_error = None
+                    break
+                except Exception as e:
+                    pro_error = e
+                    if pro_attempt < 2:
+                        logging.warning("[email] pro error (attempt %d/3): %s",
+                                        pro_attempt + 1, e)
+                        time.sleep(2 ** pro_attempt)
+
+            if pro_error:
+                logging.error("[email] pro error after 3 attempts: %s", pro_error)
+                record["pro"] = {"model": PRO_MODEL, "decision": "error",
+                                 "reason": str(pro_error),
                                  "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
                 write_audit(record, AUDIT_FILE)
-                last_received = received
+                # don't advance cursor — retry on next run
                 continue
 
             record["pro"] = {"model": PRO_MODEL, "decision": bd, "reason": br,

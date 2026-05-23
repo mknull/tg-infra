@@ -213,6 +213,17 @@ def load_records(source, since=None, last=None, today=False):
     return records
 
 
+def count_duplicates(records):
+    """Return (unique_count, duplicate_count) for a list of audit records."""
+    from collections import Counter
+    msg_ids = [r["msg_id"] for r in records]
+    counts = Counter(msg_ids)
+    unique = len(counts)
+    dupes = sum(1 for v in counts.values() if v > 1)
+    wasted = sum(v - 1 for v in counts.values() if v > 1)
+    return unique, dupes, wasted
+
+
 def load_all(since=None, last=None, today=False):
     """Load from both sources, interleaved by arrival time."""
     records = []
@@ -504,12 +515,45 @@ def main():
                    help="show cascade topology (expected vs actual)")
     p.add_argument("--days", "-d", type=int, default=7,
                    help="window in days for topology (default: 7)")
+    p.add_argument("--health", action="store_true",
+                   help="exit 1 if duplicates, broken cascades, or stalled cursors found")
     args = p.parse_args()
 
-    if args.today or args.summary or args.topology:
+    if args.today or args.summary or args.topology or args.health:
         args.last = None
 
     feedback = load_feedback()
+
+    if args.health:
+        # Short-window topology scan — exit non-zero if anything is wrong.
+        exit_code = 0
+        since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+        for src in SOURCES:
+            records = load_records(src, since=since)
+            unique, dupes, wasted = count_duplicates(records)
+            cascades = build_cascades(records)
+            entries = cascades.get(src, [])
+            if entries:
+                total = len(entries)
+                duplicates = [e for e in entries if e["eval_count"] > 1]
+                weird = [e for e in entries
+                         if any(fd["decision"] == "skip" for fd in e["flash_decisions"])
+                         and e["pro_decision"]]
+                if duplicates:
+                    n = len(duplicates)
+                    w = sum(e["eval_count"] - 1 for e in duplicates)
+                    print(f"{RED}DUPLICATE EVALS{RESET} [{src}]: {n}/{total} messages "
+                          f"re-evaluated ({w} wasted calls)")
+                    exit_code = 1
+                if weird:
+                    print(f"{RED}BROKEN CASCADE{RESET} [{src}]: {len(weird)} messages "
+                          f"with flash:skip→pro")
+                    exit_code = 1
+                if not duplicates and not weird:
+                    print(f"{GREEN}{src}: clean{RESET}")
+            else:
+                print(f"{DIM}{src}: no data in window{RESET}")
+        sys.exit(exit_code)
 
     if args.topology:
         sources = [args.source] if args.source else list(SOURCES)
@@ -541,7 +585,11 @@ def main():
         if args.summary:
             print_summary(records, src, feedback)
         else:
-            src_label = f"{src} ({len(records)} records)"
+            unique, dupes, wasted = count_duplicates(records)
+            src_label = f"{src} ({len(records)} records"
+            if dupes:
+                src_label += f", {BOLD}{RED}{dupes} msgs re-evaluated ({wasted} wasted calls){RESET}"
+            src_label += ")"
             print(f"{BOLD}══ {src_label}{RESET}\n")
             if not records:
                 print(f"  {DIM}no matching records{RESET}\n")
