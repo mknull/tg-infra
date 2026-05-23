@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(PROJECT, "state")
@@ -224,6 +224,250 @@ def load_all(since=None, last=None, today=False):
     return records
 
 
+# ── topology ─────────────────────────────────────────────────────
+
+# Expected cascade topologies per pipeline
+EXPECTED = {
+    "email": """
+  Arrival ──▶ Flash(from+subject) ──read──▶ fetch body ──▶ Pro(full body) ──send──▶ Feedback
+                                  │                          │
+                                  └──skip                    └──skip""",
+    "it_jobs_cyprus": """
+  Arrival ──▶ Flash(batch, 18 lines) ──flag──▶ Pro(full body) ──send──▶ Feedback
+                                     │                      │
+                                     └──skip                └──skip""",
+    "cyithr": """
+  Arrival ──▶ Flash(line 1) ──next──▶ Flash(line 2) ──next──▶ ... ──relevant──▶ Pro(full body) ──send──▶ Feedback
+                             │                │                     │                       │
+                             └──irrelevant    └──irrelevant         └──irrelevant           └──skip""",
+}
+
+
+def build_cascades(records, since_days=None):
+    """Group records by msg_id and reconstruct cascade paths.
+
+    Returns a dict: {source: [{msg_id, source, sender, preview,
+                               flash_decisions, pro_decision, pro_message,
+                               eval_count, path_str, arrived_at}]}
+    where path_str is a compact representation of the cascade, e.g.:
+      "f:read→p:skip" (email flash read, pro skip)
+      "f:skip" (flash skip, terminal)
+      "f:next→f:next→f:relevant→p:send" (cyithr line-by-line)
+    """
+    from collections import defaultdict
+
+    cutoff = None
+    if since_days:
+        cutoff = (datetime.now(timezone.utc)
+                  .replace(hour=0, minute=0, second=0, microsecond=0)
+                  .isoformat())
+
+    by_msg = defaultdict(list)
+    for r in records:
+        arrived = r.get("arrived_at", "")
+        if cutoff and arrived < cutoff:
+            continue
+        by_msg[r["msg_id"]].append(r)
+
+    cascades = defaultdict(list)
+    for msg_id, recs in by_msg.items():
+        recs.sort(key=lambda r: r.get("flash", {}).get("at", "")
+                   or r.get("pro", {}).get("at", "")
+                   or r.get("arrived_at", ""))
+
+        source = recs[0].get("source", "?")
+        sender = recs[0].get("sender", "?")
+        preview = recs[0].get("preview", "?")
+        arrived_at = recs[0].get("arrived_at", "?")
+
+        # Collect all distinct flash decisions (for cyithr: line-by-line)
+        flash_decs = []
+        pro_dec = None
+        pro_msg = None
+        eval_batches = set()
+        for r in recs:
+            if "flash" in r:
+                f = r["flash"]
+                key = f.get("at", "")
+                if key:
+                    eval_batches.add(key[:16])  # minute granularity
+                flash_decs.append({
+                    "decision": f.get("decision", "?"),
+                    "line": f.get("line"),
+                    "of": f.get("of"),
+                    "reason": f.get("reason", ""),
+                    "model": f.get("model", ""),
+                    "at": f.get("at", ""),
+                })
+            if "pro" in r:
+                p = r["pro"]
+                key = p.get("at", "")
+                if key:
+                    eval_batches.add(key[:16])
+                pro_dec = {
+                    "decision": p.get("decision", "?"),
+                    "reason": p.get("reason", ""),
+                    "model": p.get("model", ""),
+                    "at": p.get("at", ""),
+                }
+                pro_msg = p.get("message")
+
+        # Build compact path string
+        path_parts = []
+        for fd in flash_decs:
+            d = fd["decision"]
+            if d == "next":
+                path_parts.append(f"f:{d}")
+            else:
+                path_parts.append(f"f:{d}")
+                break  # terminal flash decision
+        if pro_dec:
+            path_parts.append(f"p:{pro_dec['decision']}")
+
+        path_str = "→".join(path_parts) if path_parts else "arrival"
+
+        cascades[source].append({
+            "msg_id": msg_id,
+            "source": source,
+            "sender": sender,
+            "preview": preview,
+            "arrived_at": arrived_at,
+            "flash_decisions": flash_decs,
+            "pro_decision": pro_dec,
+            "pro_message": pro_msg,
+            "eval_count": len(eval_batches),
+            "path_str": path_str,
+        })
+
+    return cascades
+
+
+def print_topology(cascades, source, feedback, days):
+    """Print expected vs actual topology for a pipeline."""
+    entries = cascades.get(source, [])
+    if not entries:
+        print(f"{source}: no data in window\n")
+        return
+
+    total = len(entries)
+    unique = len(set(e["msg_id"] for e in entries))
+
+    # Count path frequencies
+    from collections import Counter
+    path_counts = Counter(e["path_str"] for e in entries)
+
+    # Cascade stats
+    flash_terminals = sum(1 for e in entries
+                          if e["path_str"].startswith("f:") and "→p:" not in e["path_str"])
+    pro_evals = sum(1 for e in entries if e["pro_decision"])
+    sends = [e for e in entries
+             if e["pro_decision"] and e["pro_decision"]["decision"] == "send"]
+    duplicates = [e for e in entries if e["eval_count"] > 1]
+
+    # Feedback linkage
+    fb_linked = 0
+    fb_confirmed = 0
+    fb_corrected = 0
+    for e in sends:
+        fb_list = feedback.get(e["msg_id"], [])
+        if fb_list:
+            fb_linked += 1
+            for fb in fb_list:
+                rxns = " ".join(fb.get("reactions", []))
+                if "👍" in rxns:
+                    fb_confirmed += 1
+                elif "👎" in rxns:
+                    fb_corrected += 1
+
+    print(f"{BOLD}══ {source} topology  "
+          f"({total} messages, {days}d window){RESET}\n")
+
+    # Expected
+    exp = EXPECTED.get(source, EXPECTED.get("it_jobs_cyprus", ""))
+    print(f"{DIM}Expected:{RESET}")
+    print(exp)
+    print()
+
+    # Actual tree
+    print(f"{DIM}Actual:{RESET}")
+    print(f"  Arrival ({total})")
+    for path, count in path_counts.most_common():
+        pct = count / total * 100
+        bar = "█" * max(1, int(pct / 5))
+        print(f"    ├──▶ {path}  {count} ({pct:.0f}%) {DIM}{bar}{RESET}")
+    print()
+
+    # Node-level detail
+    print(f"{DIM}Nodes:{RESET}")
+    print(f"  Flash terminal (no Pro): {flash_terminals} ({flash_terminals/total*100:.0f}%)")
+    print(f"  Pro evaluations:         {pro_evals} ({pro_evals/total*100:.0f}%)")
+    print(f"  Pro sends:               {len(sends)}")
+    if sends:
+        print(f"  Feedback linked:         {fb_linked}/{len(sends)} sends"
+              f" ({GREEN}{fb_confirmed} confirmed{RESET},"
+              f" {RED}{fb_corrected} corrected{RESET})")
+    if source == "cyithr":
+        lines = [len([fd for fd in e["flash_decisions"] if fd["decision"] == "next"]) + 1
+                 for e in entries]
+        if lines:
+            avg_lines = sum(lines) / len(lines)
+            print(f"  Lines read (avg):        {avg_lines:.1f}")
+            print(f"  Lines read (max):        {max(lines)}")
+    print()
+
+    # Deviations
+    deviations = []
+    if duplicates:
+        n = len(duplicates)
+        wasted = sum(e["eval_count"] - 1 for e in duplicates)
+        deviations.append(
+            f"{RED}DUPLICATE EVALS{RESET}: {n}/{total} messages re-evaluated "
+            f"({wasted} wasted calls)")
+    if source == "email":
+        # Check for Pro called after Flash skip (shouldn't happen)
+        weird = [e for e in entries
+                 if any(fd["decision"] == "skip" for fd in e["flash_decisions"])
+                 and e["pro_decision"]]
+        if weird:
+            deviations.append(
+                f"{RED}BROKEN CASCADE{RESET}: {len(weird)} messages with "
+                f"flash:skip→pro called (Pro should not run after Flash skip)")
+        # Flash read rate
+        flash_reads = sum(1 for e in entries
+                         if any(fd["decision"] == "read" for fd in e["flash_decisions"]))
+        if flash_reads / total > 0.7 and len(sends) == 0:
+            deviations.append(
+                f"{YELLOW}FLASH TOO BROAD{RESET}: {flash_reads}/{total} ({flash_reads/total*100:.0f}%) "
+                f"read — but Pro sends 0. Flash costs money, adds nothing.")
+    if source == "it_jobs_cyprus":
+        pending = [e for e in entries if e["path_str"] == "arrival"]
+        if pending:
+            deviations.append(
+                f"{YELLOW}STALLED{RESET}: {len(pending)} messages at arrival, not yet triaged")
+        flags = sum(1 for e in entries
+                   if any(fd["decision"] == "flag" for fd in e["flash_decisions"]))
+        if flags > 0 and len(sends) == 0:
+            deviations.append(
+                f"{YELLOW}FLASH↛PRO MISMATCH{RESET}: Flash flagged {flags}, Pro sent 0 "
+                f"— Flash filter is either wasting Pro calls or Pro is too strict")
+    if source == "cyithr":
+        irrelevant = sum(1 for e in entries
+                        if any(fd["decision"] == "irrelevant"
+                               for fd in e["flash_decisions"]))
+        if irrelevant == total and total > 0:
+            deviations.append(
+                f"{YELLOW}ZERO PASS{RESET}: Flash rejected all {total} messages "
+                f"— criteria may be too strict or channel has no relevant content")
+
+    if deviations:
+        print(f"{BOLD}Deviations:{RESET}")
+        for d in deviations:
+            print(f"  {d}")
+        print()
+    else:
+        print(f"{GREEN}No deviations detected.{RESET}\n")
+
+
 # ── main ────────────────────────────────────────────────────────
 
 def main():
@@ -238,6 +482,8 @@ def main():
   ./audit email --since 2026-05-18   email since midnight UTC
   ./audit --last 10           last 10 records
   ./audit --summary           aggregate stats only
+  ./audit --topology          cascade topology (7d window)
+  ./audit --topology --days 3 cascade topology (3d window)
   ./audit email --content     include full bodies""",
     )
     p.add_argument("source", nargs="?", choices=["email", "telegram"],
@@ -254,12 +500,38 @@ def main():
                    help="show aggregate stats only")
     p.add_argument("--verbose", "-v", action="store_true",
                    help="show full bodies and extra fields")
+    p.add_argument("--topology", "-t", action="store_true",
+                   help="show cascade topology (expected vs actual)")
+    p.add_argument("--days", "-d", type=int, default=7,
+                   help="window in days for topology (default: 7)")
     args = p.parse_args()
 
-    if args.today or args.summary:
+    if args.today or args.summary or args.topology:
         args.last = None
 
     feedback = load_feedback()
+
+    if args.topology:
+        sources = [args.source] if args.source else list(SOURCES)
+        if args.since:
+            since = args.since
+        else:
+            since = (datetime.now(timezone.utc)
+                     - timedelta(days=args.days)).isoformat()
+        for src in sources:
+            records = load_records(src, since=since)
+            cascades = build_cascades(records)
+            print_topology(cascades, src, feedback, args.days)
+        # footer
+        print(f"{DIM}── cursors{RESET}")
+        for cursor_name, src in [("email", "email-cursor"),
+                                  ("it_jobs_cyprus", "it-jobs-cursor"),
+                                  ("cyithr", "cyithr-cursor")]:
+            cursor_path = os.path.join(STATE, src)
+            if os.path.exists(cursor_path):
+                val = open(cursor_path).read().strip()
+                print(f"  {DIM}{cursor_name}: {val}{RESET}")
+        return
 
     sources = [args.source] if args.source else list(SOURCES)
 

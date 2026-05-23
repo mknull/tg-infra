@@ -13,6 +13,13 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 - `it-jobs-poller.py` — Telethon poller: reads @it_jobs_cyprus and @cyithr via user API, writes to `state/message_queue/`
 - `it-jobs-triage.py` — Two-model triage: DeepSeek Flash first-pass → DeepSeek Pro full eval → Telegram Bot API delivery
 - `email-triage.py` — Outlook Graph API → DeepSeek Flash header filter → DeepSeek Pro body eval → Telegram Bot API delivery
+- `bot-commands.py` — Oneshot bot-command processor: polls getUpdates, handles /briefme, exits
+- `lib.py` — Shared utilities: load_env, call_deepseek, extract_json, send_telegram, write_audit, and common constants
+- `audit` — CLI for querying the audit trail: `./audit`, `./audit --topology`, `./audit email --today`
+
+## Commit credit
+
+All commit messages are credited to Filippos Panagiotou, DeepSeek (Flash + Pro via API), and the Claude Code harness. Anthropic models are not involved — the harness drives the session but the LLM backend is deepseek-v4-pro and deepseek-v4-flash.
 
 ## State
 
