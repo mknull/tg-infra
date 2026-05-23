@@ -12,6 +12,9 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
+                 load_env, call_deepseek, extract_json, send_telegram, write_audit)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(message)s",
@@ -21,37 +24,18 @@ logging.basicConfig(
 STATE_DIR = Path(__file__).resolve().parent / "state"
 CURSOR_FILE = STATE_DIR / "email-cursor"
 REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
-AUDIT_DIR = STATE_DIR / "audit"
-AUDIT_FILE = AUDIT_DIR / "email.jsonl"
+AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
 CRITERIA_FILE = STATE_DIR / "email-triage-criteria.md"
 TOKEN_FILE = STATE_DIR / "outlook-token.json"
-ENV_FILE = STATE_DIR / ".env"
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-FLASH_MODEL = "deepseek-v4-flash"
-PRO_MODEL = "deepseek-v4-pro"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-TELEGRAM_CHAT_ID = "CHAT_ID_PLACEHOLDER"
 TOKEN_REFRESH_BUFFER_S = 300  # refresh 5 min before expiry
 
 
 # ---------------------------------------------------------------------------
 # env / token
 # ---------------------------------------------------------------------------
-
-def load_env() -> dict:
-    env = {}
-    try:
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    except FileNotFoundError:
-        pass
-    return env
-
 
 def load_token() -> dict:
     return json.loads(TOKEN_FILE.read_text())
@@ -186,63 +170,6 @@ def save_cursor(ts: str) -> None:
     CURSOR_FILE.write_text(ts)
 
 
-# ---------------------------------------------------------------------------
-# logging / telegram
-# ---------------------------------------------------------------------------
-
-def write_audit(record: dict) -> None:
-    """Append one complete audit record for a processed email."""
-    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-    with AUDIT_FILE.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-
-
-def send_telegram(bot_token: str, text: str) -> str:
-    """Send a Telegram message. Returns the Telegram message_id."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        body = json.loads(resp.read())
-    if not body.get("ok"):
-        raise RuntimeError(f"Telegram API error: {body}")
-    return str(body["result"]["message_id"])
-
-
-# ---------------------------------------------------------------------------
-# DeepSeek
-# ---------------------------------------------------------------------------
-
-def call_deepseek(model: str, prompt: str, api_key: str, timeout: int = 90) -> str:
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-    req = urllib.request.Request(
-        DEEPSEEK_API_URL, data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"].strip()
-
-
-def extract_json(text: str) -> dict:
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end == 0:
-        raise ValueError(f"No JSON in: {text[:200]}")
-    return json.loads(text[start:end])
-
-
 def flash_header_triage(from_addr: str, subject: str, api_key: str) -> tuple[str, str]:
     """Return (decision, reason). decision is 'read' or 'skip'."""
     criteria = CRITERIA_FILE.read_text()
@@ -332,7 +259,7 @@ def main() -> None:
             logging.error("[email] flash error: %s", e)
             record["flash"] = {"model": FLASH_MODEL, "decision": "error", "reason": str(e),
                                "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-            write_audit(record)
+            write_audit(record, AUDIT_FILE)
             last_received = received
             continue
 
@@ -347,7 +274,7 @@ def main() -> None:
             except Exception as e:
                 logging.error("[email] body fetch error: %s", e)
                 last_received = received
-                write_audit(record)
+                write_audit(record, AUDIT_FILE)
                 continue
 
             try:
@@ -356,7 +283,7 @@ def main() -> None:
                 logging.error("[email] pro error: %s", e)
                 record["pro"] = {"model": PRO_MODEL, "decision": "error", "reason": str(e),
                                  "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-                write_audit(record)
+                write_audit(record, AUDIT_FILE)
                 last_received = received
                 continue
 
@@ -380,7 +307,7 @@ def main() -> None:
             email_content = body_text
 
         record["content"] = email_content or subject
-        write_audit(record)
+        write_audit(record, AUDIT_FILE)
         last_received = received
 
     if last_received and last_received != cursor:

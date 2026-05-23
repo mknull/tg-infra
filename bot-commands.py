@@ -5,10 +5,11 @@ import json
 import logging
 import re
 import urllib.request
-import urllib.parse
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lib import (DEEPSEEK_API_URL, PRO_MODEL, load_env, call_deepseek)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,28 +24,13 @@ REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_DIR = STATE_DIR / "audit"
 CURSOR_FILE = STATE_DIR / "bot-cursor"
 FEEDBACK_FILE = STATE_DIR / "feedback.jsonl"
-ENV_FILE = STATE_DIR / ".env"
 
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-PRO_MODEL = "deepseek-v4-pro"
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 
 # ---------------------------------------------------------------------------
 # env / cursor
 # ---------------------------------------------------------------------------
-
-def load_env() -> dict:
-    env = {}
-    try:
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    except FileNotFoundError:
-        pass
-    return env
 
 
 def load_cursor() -> int:
@@ -176,26 +162,6 @@ def send_document(token: str, chat_id: str, file_path: Path, caption: str,
         result = json.loads(resp.read())
     if not result.get("ok"):
         raise RuntimeError(f"sendDocument error: {result}")
-
-
-# ---------------------------------------------------------------------------
-# DeepSeek
-# ---------------------------------------------------------------------------
-
-def call_deepseek(model: str, prompt: str, api_key: str, timeout: int = 180) -> str:
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-    req = urllib.request.Request(
-        DEEPSEEK_API_URL, data=payload,
-        headers={"Content-Type": "application/json",
-                 "Authorization": f"Bearer {api_key}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"].strip()
 
 
 # ---------------------------------------------------------------------------

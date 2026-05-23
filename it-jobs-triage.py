@@ -3,11 +3,12 @@
 
 import json
 import logging
-import urllib.request
-import urllib.parse
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
+                 load_env, call_deepseek, extract_json, send_telegram, write_audit)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,79 +20,8 @@ STATE_DIR = Path(__file__).resolve().parent / "state"
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
 REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
-AUDIT_DIR = STATE_DIR / "audit"
-AUDIT_FILE = AUDIT_DIR / "telegram.jsonl"
+AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
-ENV_FILE = STATE_DIR / ".env"
-
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
-FLASH_MODEL = "deepseek-v4-flash"
-PRO_MODEL = "deepseek-v4-pro"
-TELEGRAM_CHAT_ID = "CHAT_ID_PLACEHOLDER"
-
-
-def load_env() -> dict:
-    env = {}
-    try:
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    except FileNotFoundError:
-        pass
-    return env
-
-
-def write_audit(record: dict) -> None:
-    """Append one complete audit record for a processed message."""
-    AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-    with AUDIT_FILE.open("a") as f:
-        f.write(json.dumps(record) + "\n")
-
-
-def call_deepseek(model: str, prompt: str, api_key: str, timeout: int = 90) -> str:
-    payload = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-    }).encode()
-    req = urllib.request.Request(
-        DEEPSEEK_API_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = json.loads(resp.read())
-    return body["choices"][0]["message"]["content"].strip()
-
-
-def extract_json(text: str) -> dict:
-    start = text.find("{")
-    end = text.rfind("}") + 1
-    if start == -1 or end == 0:
-        raise ValueError(f"No JSON found in: {text[:200]}")
-    return json.loads(text[start:end])
-
-
-def send_telegram(bot_token: str, text: str) -> str:
-    """Send a Telegram message. Returns the Telegram message_id."""
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        body = json.loads(resp.read())
-    if not body.get("ok"):
-        raise RuntimeError(f"Telegram API error: {body}")
-    return str(body["result"]["message_id"])
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +226,7 @@ def main() -> None:
         else:
             logging.info("[%s/%s] pro skipped (flash: skip)", channel, message_id)
 
-        write_audit(record)
+        write_audit(record, AUDIT_FILE)
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         msg_id = record["msg_id"]
         path.rename(MESSAGES_DIR / f"{msg_id}.json")
