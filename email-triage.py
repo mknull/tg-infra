@@ -384,8 +384,13 @@ def main() -> None:
         last_received = received
 
     if last_received and last_received != cursor:
-        save_cursor(last_received)
-        logging.info("Cursor → %s", last_received)
+        # Advance 1 s past the last email so Graph API's `gt` filter
+        # excludes sub-second timestamps (e.g. 21:16:43.527 > 21:16:43).
+        ts = last_received.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        safe = (dt + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        save_cursor(safe)
+        logging.info("Cursor → %s", safe)
 
     logging.info("Done.")
 
