@@ -526,8 +526,10 @@ def main():
 
     if args.health:
         # Short-window topology scan — exit non-zero if anything is wrong.
+        # Default to 1 day unless --days was explicitly passed.
         exit_code = 0
-        since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+        days = args.days if ('--days' in sys.argv or '-d' in sys.argv) else 1
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         for src in SOURCES:
             records = load_records(src, since=since)
             unique, dupes, wasted = count_duplicates(records)

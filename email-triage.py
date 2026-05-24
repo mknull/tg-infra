@@ -233,7 +233,6 @@ def main() -> None:
         return
 
     logging.info("Processing %d email(s).", len(emails))
-    last_received = cursor
 
     for msg in emails:
         msg_id = msg["id"]
@@ -285,7 +284,6 @@ def main() -> None:
                 body_text = fetch_body(access_token, msg_id)
             except Exception as e:
                 logging.error("[email] body fetch error: %s", e)
-                last_received = received
                 write_audit(record, AUDIT_FILE)
                 continue
 
@@ -332,16 +330,12 @@ def main() -> None:
 
         record["content"] = email_content or subject
         write_audit(record, AUDIT_FILE)
-        last_received = received
-
-    if last_received and last_received != cursor:
-        # Advance 1 s past the last email so Graph API's `gt` filter
-        # excludes sub-second timestamps (e.g. 21:16:43.527 > 21:16:43).
-        ts = last_received.replace("Z", "+00:00")
+        # Advance cursor per-email so transient errors later in the
+        # batch don't cause already-processed emails to be re-fetched.
+        ts = received.replace("Z", "+00:00")
         dt = datetime.fromisoformat(ts)
         safe = (dt + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
         save_cursor(safe)
-        logging.info("Cursor → %s", safe)
 
     logging.info("Done.")
 
