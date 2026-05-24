@@ -1,0 +1,21 @@
+#!/bin/bash
+# email-ingest wrapper — runs triage, then audit health check.
+# If audit finds duplicates or broken cascades, notifies via Telegram.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+# --- triage ---
+./jobsmcp/bin/python3 email-triage.py
+
+# --- audit health check (1-day window) ---
+if ! ./audit --health --days 1 > /dev/null 2>&1; then
+    # audit failed — notify user to investigate
+    ./jobsmcp/bin/python3 -c "
+import sys; sys.path.insert(0, '.')
+from lib import load_env, send_telegram
+env = load_env()
+token = env.get('TELEGRAM_BOT_TOKEN', '')
+if token:
+    send_telegram(token, 'Audit health check failed. Run ./audit --health')
+"
+fi
