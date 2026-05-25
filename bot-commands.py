@@ -201,7 +201,9 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
                  reply_to=reply_to_msg_id)
 
     try:
-        brief = run_agent(job_text, api_key)
+        brief = run_agent(job_text, api_key,
+                          audit_meta={"sender": chat_id,
+                                      "preview": role_label or job_text[:120]})
     except Exception as e:
         logging.error("Agent failed: %s", e)
         send_message(token, chat_id, "Briefing failed — try again later.",

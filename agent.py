@@ -3,12 +3,16 @@
 
 import json
 import logging
+import time
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import DEEPSEEK_API_URL, PRO_MODEL, PROJECT_DIR
+from lib import DEEPSEEK_API_URL, PRO_MODEL, STATE_DIR, PROJECT_DIR, write_audit
 from tools import read_file, web_search, web_fetch, md_to_pdf
 from guardrails import RateLimiter, BRIEFS_DIR
+
+AGENT_AUDIT_FILE = STATE_DIR / "audit" / "agent.jsonl"
 
 # --- Tool definitions (DeepSeek function-calling schema) ---
 
@@ -94,8 +98,13 @@ Workflow:
 MAX_TURNS = 15
 
 
-def run_agent(job_text: str, api_key: str) -> str:
-    """Run the /briefme agent. Returns the brief as markdown, or raises."""
+def run_agent(job_text: str, api_key: str,
+              audit_meta: dict | None = None) -> str:
+    """Run the /briefme agent. Returns the brief as markdown, or raises.
+
+    If audit_meta is provided, writes an audit record on completion or failure.
+    audit_meta should have: sender, preview.
+    """
 
     system_prompt = build_system_prompt()
     messages = [
@@ -104,69 +113,119 @@ def run_agent(job_text: str, api_key: str) -> str:
     ]
 
     rl = RateLimiter()
+    tool_log: list[dict] = []
+    started_at = time.monotonic()
+    error = None
 
-    for turn in range(MAX_TURNS):
-        payload = json.dumps({
-            "model": PRO_MODEL,
-            "messages": messages,
-            "tools": TOOLS,
-            "tool_choice": "auto",
-        }).encode()
+    try:
+        for turn in range(MAX_TURNS):
+            payload = json.dumps({
+                "model": PRO_MODEL,
+                "messages": messages,
+                "tools": TOOLS,
+                "tool_choice": "auto",
+            }).encode()
 
-        req = urllib.request.Request(
-            DEEPSEEK_API_URL, data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            body = json.loads(resp.read())
+            req = urllib.request.Request(
+                DEEPSEEK_API_URL, data=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=180) as resp:
+                body = json.loads(resp.read())
 
-        choice = body["choices"][0]
-        msg = choice["message"]
-        finish = choice.get("finish_reason", "")
+            choice = body["choices"][0]
+            msg = choice["message"]
+            finish = choice.get("finish_reason", "")
 
-        # --- assistant message may have content, tool_calls, or both ---
-        assistant_msg = {"role": "assistant"}
-        if msg.get("content"):
-            assistant_msg["content"] = msg["content"]
-        if msg.get("tool_calls"):
-            assistant_msg["tool_calls"] = msg["tool_calls"]
+            assistant_msg = {"role": "assistant"}
+            if msg.get("content"):
+                assistant_msg["content"] = msg["content"]
+            if msg.get("tool_calls"):
+                assistant_msg["tool_calls"] = msg["tool_calls"]
 
-        messages.append(assistant_msg)
+            messages.append(assistant_msg)
 
-        # --- if the model is done, return the content ---
-        if finish == "stop" and not msg.get("tool_calls"):
-            return msg.get("content", "")
+            if finish == "stop" and not msg.get("tool_calls"):
+                brief = msg.get("content", "")
+                _write_agent_audit(audit_meta, brief, tool_log, turn + 1,
+                                   started_at, error=None)
+                return brief
 
-        # --- execute tool calls ---
-        if msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                fn = tc["function"]
-                name = fn["name"]
-                args = json.loads(fn["arguments"])
+            if msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    fn = tc["function"]
+                    name = fn["name"]
+                    args = json.loads(fn["arguments"])
 
-                logging.info("agent tool call: %s(%s)", name,
-                            json.dumps(args)[:120])
+                    t0 = time.monotonic()
+                    try:
+                        if name == "read_file":
+                            result = read_file(args["path"])
+                            tool_ok = True
+                        elif name == "web_search":
+                            result = web_search(args["query"])
+                            tool_ok = "search error" not in result
+                        elif name == "web_fetch":
+                            result = web_fetch(args["url"], rate_limiter=rl)
+                            tool_ok = "fetch blocked" not in result and "fetch error" not in result
+                        else:
+                            result = f"unknown tool: {name}"
+                            tool_ok = False
+                    except Exception as e:
+                        result = f"tool error: {e}"
+                        tool_ok = False
 
-                try:
-                    if name == "read_file":
-                        result = read_file(args["path"])
-                    elif name == "web_search":
-                        result = web_search(args["query"])
-                    elif name == "web_fetch":
-                        result = web_fetch(args["url"], rate_limiter=rl)
-                    else:
-                        result = f"unknown tool: {name}"
-                except Exception as e:
-                    result = f"tool error: {e}"
+                    elapsed_ms = int((time.monotonic() - t0) * 1000)
+                    tool_log.append({
+                        "tool": name,
+                        "args": {k: v for k, v in args.items() if k != "path"},
+                        "ok": tool_ok,
+                        "result_bytes": len(result),
+                        "duration_ms": elapsed_ms,
+                    })
 
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc["id"],
-                    "content": result,
-                })
+                    logging.info("agent tool call: %s(%s) → %s (%dms)",
+                                name, json.dumps(args)[:80],
+                                "ok" if tool_ok else "FAIL", elapsed_ms)
 
-    raise RuntimeError(f"Agent exceeded {MAX_TURNS} turns without finishing")
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result,
+                    })
+
+        error = f"exceeded {MAX_TURNS} turns without finishing"
+        raise RuntimeError(error)
+
+    except Exception as e:
+        error = str(e)
+        _write_agent_audit(audit_meta, "", tool_log, 0, started_at, error=error)
+        raise
+
+
+def _write_agent_audit(audit_meta: dict | None, brief: str,
+                       tool_log: list[dict], turns: int,
+                       started_at: float, error: str | None) -> None:
+    """Write one audit record for a /briefme agent run."""
+    if audit_meta is None:
+        return
+
+    record = {
+        "msg_id": datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-briefme",
+        "source": "briefme",
+        "sender": audit_meta.get("sender", "?"),
+        "preview": audit_meta.get("preview", "?")[:120],
+        "arrived_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "success": error is None and len(brief) > 0,
+        "turns": turns,
+        "tool_calls": tool_log,
+        "tool_errors": sum(1 for t in tool_log if not t["ok"]),
+        "brief_bytes": len(brief),
+        "duration_s": round(time.monotonic() - started_at, 1),
+        "error": error,
+    }
+    write_audit(record, AGENT_AUDIT_FILE)

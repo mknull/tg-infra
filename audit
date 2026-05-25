@@ -17,7 +17,8 @@ PROJECT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(PROJECT, "state")
 AUDIT_DIR = os.path.join(STATE, "audit")
 
-SOURCES = {"email": "email.jsonl", "telegram": "telegram.jsonl"}
+SOURCES = {"email": "email.jsonl", "telegram": "telegram.jsonl",
+           "briefme": "agent.jsonl"}
 FEEDBACK_FILE = os.path.join(STATE, "feedback.jsonl")
 REF_MAP_FILE = os.path.join(STATE, "ref-map.jsonl")
 
@@ -83,6 +84,36 @@ def print_record(r, feedback=None, show_content=False, verbose=False):
     msg_id = r.get("msg_id", "?")
     stage = r.get("stage", "")
     pro_decision = r.get("pro", {}).get("decision")
+
+    # Agent (briefme) records use a different schema
+    if source == "briefme" or "turns" in r:
+        success = r.get("success", False)
+        error = r.get("error")
+        turns = r.get("turns", 0)
+        tool_calls = r.get("tool_calls", [])
+        tool_errors = r.get("tool_errors", 0)
+        brief_bytes = r.get("brief_bytes", 0)
+        duration = r.get("duration_s", 0)
+
+        status = GREEN if success else RED
+        print(f"{BOLD}{fmt_ts(arrived)}  briefme  {sender}{RESET}")
+        print(f"  {preview}")
+        print(f"  {turns} turns, {len(tool_calls)} tools, "
+              f"{tool_errors} errors, {brief_bytes}B brief, "
+              f"{status}{duration}s{RESET}")
+        if error:
+            print(f"  {RED}error: {error}{RESET}")
+        if tool_calls and (verbose or show_content or tool_errors):
+            for tc in tool_calls:
+                tc_status = GREEN if tc["ok"] else RED
+                args_str = json.dumps(tc.get("args", {}))
+                if len(args_str) > 80:
+                    args_str = args_str[:77] + "..."
+                print(f"  {DIM}{tc['tool']}{RESET}({args_str}) "
+                      f"→ {tc_status}{tc['result_bytes']}B{RESET} "
+                      f"{DIM}{tc['duration_ms']}ms{RESET}")
+        print()
+        return
 
     print(f"{BOLD}{fmt_ts(arrived)}  {source}  {sender}{RESET}")
     print(f"  {preview}")
@@ -497,8 +528,8 @@ def main():
   ./audit --topology --days 3 cascade topology (3d window)
   ./audit email --content     include full bodies""",
     )
-    p.add_argument("source", nargs="?", choices=["email", "telegram"],
-                   help="pipeline to query (default: both)")
+    p.add_argument("source", nargs="?", choices=["email", "telegram", "briefme"],
+                   help="pipeline to query (default: all)")
     p.add_argument("--last", "-n", type=int, default=3,
                    help="show last N records (default: 3)")
     p.add_argument("--since", metavar="TS",
@@ -525,13 +556,41 @@ def main():
     feedback = load_feedback()
 
     if args.health:
-        # Short-window topology scan — exit non-zero if anything is wrong.
-        # Default to 1 day unless --days was explicitly passed.
+        # Short-window scan — exit non-zero if anything is wrong.
         exit_code = 0
         days = args.days if ('--days' in sys.argv or '-d' in sys.argv) else 1
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         for src in SOURCES:
             records = load_records(src, since=since)
+
+            # Agent (briefme) records — different health checks
+            if src == "briefme":
+                total = len(records)
+                if total == 0:
+                    print(f"{DIM}{src}: no data in window{RESET}")
+                    continue
+                failures = [r for r in records if not r.get("success")]
+                zero_tools = [r for r in records
+                             if r.get("success") and len(r.get("tool_calls", [])) == 0]
+                high_errors = [r for r in records
+                              if len(r.get("tool_calls", [])) > 0
+                              and r.get("tool_errors", 0) / len(r["tool_calls"]) > 0.5]
+                if failures:
+                    print(f"{RED}BRIEFME FAILURES{RESET}: {len(failures)}/{total} "
+                          f"briefs failed")
+                    exit_code = 1
+                if zero_tools:
+                    print(f"{YELLOW}BRIEFME NO RESEARCH{RESET}: {len(zero_tools)}/{total} "
+                          f"briefs used zero tools")
+                    exit_code = 1
+                if high_errors:
+                    print(f"{RED}BRIEFME TOOL ERRORS{RESET}: {len(high_errors)}/{total} "
+                          f"briefs with >50% tool failures")
+                    exit_code = 1
+                if not failures and not zero_tools and not high_errors:
+                    print(f"{GREEN}{src}: clean{RESET}")
+                continue
+
             unique, dupes, wasted = count_duplicates(records)
             cascades = build_cascades(records)
             entries = cascades.get(src, [])
@@ -559,6 +618,7 @@ def main():
 
     if args.topology:
         sources = [args.source] if args.source else list(SOURCES)
+        sources = [s for s in sources if s != "briefme"]  # no cascade for agent
         if args.since:
             since = args.since
         else:
