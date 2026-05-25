@@ -1,1 +1,4 @@
 telethon
+markdown
+weasyprint
+playwright
