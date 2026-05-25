@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from lib import (DEEPSEEK_API_URL, PRO_MODEL, load_env, call_deepseek)
+from agent import run_agent
 
 logging.basicConfig(
     level=logging.INFO,
@@ -165,52 +166,6 @@ def send_document(token: str, chat_id: str, file_path: Path, caption: str,
 
 
 # ---------------------------------------------------------------------------
-# prompt assembly
-# ---------------------------------------------------------------------------
-
-def load_skill_prompt() -> str:
-    skill_dir = PROJECT_DIR / "skills" / "job-brief"
-    refs_dir = skill_dir / "references"
-    source_dir = PROJECT_DIR / "source"
-
-    skill = (skill_dir / "SKILL.md").read_text()
-    discipline = (refs_dir / "briefing-discipline.md").read_text()
-    relevance = (refs_dir / "profile-for-relevance.md").read_text()
-    interests = (source_dir / "interests.txt").read_text()
-    skills_txt = (source_dir / "skills.txt").read_text()
-    tech_stack = (source_dir / "tech_stack.txt").read_text()
-
-    return f"""You are a job briefing agent. Produce decision-grade briefs for Filippos Panagiotou.
-
-## Brief structure
-{skill}
-
-## Briefing discipline
-{discipline}
-
-## Filippos's career-strategic profile
-{relevance}
-
-## Filippos's research interests
-{interests}
-
-## Filippos's skills
-{skills_txt}
-
-## Filippos's tech stack
-{tech_stack}
-
-## Instructions
-
-You are running inside a Telegram bot with no web access. Produce the best brief you can
-from the job description provided. For sections that require live web research (org funding,
-recent news, reputation), mark them: "[Web research unavailable — verify manually]".
-
-Output the brief as clean markdown.
-"""
-
-
-# ---------------------------------------------------------------------------
 # command handlers
 # ---------------------------------------------------------------------------
 
@@ -245,18 +200,15 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
     send_message(token, chat_id, f"Briefing{source_note}… (2–5 minutes)",
                  reply_to=reply_to_msg_id)
 
-    prompt = load_skill_prompt()
-    prompt += f"\n\n## Job description to brief\n\n{job_text[:12000]}"
-
     try:
-        brief = call_deepseek(PRO_MODEL, prompt, api_key, timeout=180)
+        brief = run_agent(job_text, api_key)
     except Exception as e:
-        logging.error("DeepSeek call failed: %s", e)
-        send_message(token, chat_id, "Briefing failed — DeepSeek API error. Try again later.",
+        logging.error("Agent failed: %s", e)
+        send_message(token, chat_id, "Briefing failed — try again later.",
                      reply_to=reply_to_msg_id)
         return
 
-    # Save brief to file
+    # Save brief to file, convert to PDF
     briefs_dir = PROJECT_DIR / "workspace" / "briefs"
     briefs_dir.mkdir(parents=True, exist_ok=True)
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -264,12 +216,18 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
     brief_path = briefs_dir / f"{today}-{slug}.md"
     brief_path.write_text(brief)
 
-    # Caption
+    from tools import md_to_pdf
+    try:
+        pdf_path = md_to_pdf(brief_path)
+    except Exception as e:
+        logging.error("PDF conversion failed, falling back to markdown: %s", e)
+        pdf_path = brief_path
+
     caption = f"Here is your briefing for: {role_label or 'this role'}"
 
     try:
-        send_document(token, chat_id, brief_path, caption, reply_to=reply_to_msg_id)
-        logging.info("brief delivered as %s", brief_path.name)
+        send_document(token, chat_id, pdf_path, caption, reply_to=reply_to_msg_id)
+        logging.info("brief delivered as %s", pdf_path.name)
     except Exception as e:
         logging.error("sendDocument failed, falling back to message: %s", e)
         send_message(token, chat_id, brief[:4000], reply_to=reply_to_msg_id)
