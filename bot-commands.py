@@ -197,7 +197,7 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
 
     logging.info("briefme: original=%s, label=%s", bool(original), role_label)
 
-    send_message(token, chat_id, f"Briefing{source_note}… (2–5 minutes)",
+    send_message(token, chat_id, "Agent is out gathering details…",
                  reply_to=reply_to_msg_id)
 
     try:

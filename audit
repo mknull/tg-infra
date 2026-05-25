@@ -332,7 +332,12 @@ def build_cascades(records, since_days=None):
                 f = r["flash"]
                 key = f.get("at", "")
                 if key:
-                    eval_batches.add(key[:16])  # minute granularity
+                    # Use the flash-at key only. Pro runs in the same
+                    # triage execution, so its timestamp shouldn't create
+                    # a separate eval batch.  Flash and Pro can land in
+                    # different minutes (e.g. :45 and :46) — that's one
+                    # evaluation, not two.
+                    eval_batches.add(key[:16])
                 flash_decs.append({
                     "decision": f.get("decision", "?"),
                     "line": f.get("line"),
@@ -343,9 +348,6 @@ def build_cascades(records, since_days=None):
                 })
             if "pro" in r:
                 p = r["pro"]
-                key = p.get("at", "")
-                if key:
-                    eval_batches.add(key[:16])
                 pro_dec = {
                     "decision": p.get("decision", "?"),
                     "reason": p.get("reason", ""),
