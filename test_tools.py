@@ -80,19 +80,13 @@ class TestWebFetch(unittest.TestCase):
 class TestPdfWriter(unittest.TestCase):
 
     def test_converts_md_to_pdf(self):
-        pdf_path = md_to_pdf("# Test Brief\n\nThis is a **test** brief.")
-        try:
-            self.assertTrue(pdf_path.exists())
-            self.assertGreater(pdf_path.stat().st_size, 100)
-        finally:
-            pdf_path.unlink()
+        pdf_bytes, filename = md_to_pdf("# Test Brief\n\nThis is a **test** brief.")
+        self.assertGreater(len(pdf_bytes), 100)
+        self.assertTrue(filename.endswith(".pdf"))
 
     def test_handles_empty_brief(self):
-        pdf_path = md_to_pdf("")
-        try:
-            self.assertTrue(pdf_path.exists())
-        finally:
-            pdf_path.unlink()
+        pdf_bytes, filename = md_to_pdf("")
+        self.assertIsInstance(pdf_bytes, bytes)
 
 
 if __name__ == "__main__":

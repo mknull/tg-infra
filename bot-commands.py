@@ -126,8 +126,8 @@ def send_message(token: str, chat_id: str, text: str, reply_to: str | None = Non
     telegram_call(token, "sendMessage", params)
 
 
-def send_document(token: str, chat_id: str, file_path: Path, caption: str,
-                  reply_to: str | None = None) -> None:
+def send_document(token: str, chat_id: str, file_bytes: bytes, filename: str,
+                  caption: str, reply_to: str | None = None) -> None:
     """Upload a file as a Telegram document with a caption."""
     import email.mime.multipart
     import email.mime.nonmultipart
@@ -144,11 +144,10 @@ def send_document(token: str, chat_id: str, file_path: Path, caption: str,
     body += 'Content-Disposition: form-data; name="caption"\r\n\r\n'
     body += f"{caption}\r\n"
     body += f"--{boundary}\r\n"
-    body += f'Content-Disposition: form-data; name="document"; filename="{file_path.name}"\r\n'
+    body += f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'
     body += "Content-Type: application/octet-stream\r\n\r\n"
 
     body_bytes = body.encode("utf-8")
-    file_bytes = file_path.read_bytes()
     tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
 
     data = body_bytes + file_bytes + tail
@@ -220,16 +219,18 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
 
     from tools import md_to_pdf
     try:
-        pdf_path = md_to_pdf(brief, brief_path.with_suffix(".pdf"))
+        pdf_bytes, pdf_filename = md_to_pdf(brief)
     except Exception as e:
         logging.error("PDF conversion failed, falling back to markdown: %s", e)
-        pdf_path = brief_path
+        pdf_bytes = brief_path.read_bytes()
+        pdf_filename = brief_path.name
 
     caption = f"Here is your briefing for: {role_label or 'this role'}"
 
     try:
-        send_document(token, chat_id, pdf_path, caption, reply_to=reply_to_msg_id)
-        logging.info("brief delivered as %s", pdf_path.name)
+        send_document(token, chat_id, pdf_bytes, pdf_filename, caption,
+                      reply_to=reply_to_msg_id)
+        logging.info("brief delivered as %s", pdf_filename)
     except Exception as e:
         logging.error("sendDocument failed, falling back to message: %s", e)
         send_message(token, chat_id, brief[:4000], reply_to=reply_to_msg_id)

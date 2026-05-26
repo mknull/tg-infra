@@ -117,15 +117,15 @@ def web_fetch(url: str, flash_fn=None, rate_limiter: RateLimiter | None = None) 
 # pdf_writer — converts markdown brief to PDF
 # ---------------------------------------------------------------------------
 
-def md_to_pdf(markdown_text: str, output_path: Path | None = None) -> Path:
-    """Convert markdown text to PDF. Returns path to the PDF file."""
+def md_to_pdf(markdown_text: str) -> tuple[bytes, str]:
+    """Convert markdown text to PDF. Returns (pdf_bytes, filename)."""
+    import io
     import markdown
     from weasyprint import HTML
     from datetime import datetime, timezone
 
-    if output_path is None:
-        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        output_path = BRIEFS_DIR / f"brief-{ts}.pdf"
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"brief-{ts}.pdf"
 
     html_body = markdown.markdown(markdown_text, extensions=["extra", "sane_lists"])
 
@@ -144,5 +144,6 @@ def md_to_pdf(markdown_text: str, output_path: Path | None = None) -> Path:
 <body>{html_body}</body>
 </html>"""
 
-    HTML(string=html).write_pdf(str(output_path))
-    return output_path
+    buf = io.BytesIO()
+    HTML(string=html).write_pdf(buf)
+    return buf.getvalue(), filename
