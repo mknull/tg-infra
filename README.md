@@ -1,5 +1,7 @@
 # telegram_MCP
 
+[![CI](https://github.com/mknull/tg-infra/actions/workflows/ci.yml/badge.svg)](https://github.com/mknull/tg-infra/actions/workflows/ci.yml)
+
 A self-contained job-market intelligence pipeline. Monitors Telegram groups, Outlook inboxes, and recruitment sites — runs a two-stage DeepSeek triage to filter vacancies for relevance — delivers decision-grade briefs to a private Telegram chat. Built to run unattended under systemd with no third-party services.
 
 ## Architecture
