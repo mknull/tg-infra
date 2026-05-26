@@ -32,64 +32,64 @@ def _load_channel_config() -> dict[str, dict]:
 
 
 # ---------------------------------------------------------------------------
-# Flash strategies — prompt from channel config, content handled here
+# Unified incremental flash — read 3 lines at a time
 # ---------------------------------------------------------------------------
 
-def flash_batch(content: str, message_id: str, channel: str, api_key: str,
-                flash_prompt: str) -> tuple[bool, str]:
-    """Return (flag, reason). Sends first 18 lines as the posting content."""
-    first_lines = "\n".join(content.splitlines()[:18])
-    prompt = f"{flash_prompt}\n\nPosting (first lines):\n{first_lines}"
-    try:
-        raw = call_deepseek(FLASH_MODEL, prompt, api_key)
-        result = extract_json(raw)
-        is_vacancy = bool(result.get("is_vacancy"))
-        flag = bool(result.get("flag")) and is_vacancy
-        reason = result.get("reason", "")
-        decision = "flag" if flag else "skip"
-        logging.info("[%s/%s] flash → %s | is_vacancy=%s | %s", channel, message_id, decision, is_vacancy, reason)
-        return flag, reason
-    except Exception as e:
-        logging.error("[%s/%s] flash error: %s", channel, message_id, e)
-        return False, str(e)
+FLASH_PROMPT = (
+    "You are a job posting filter reading a posting incrementally.\n\n"
+    "The candidate wants roles like: {desired_roles}\n"
+    "They will also accept: {acceptable_roles}\n\n"
+    "You are seeing a 3-line window. Respond with ONLY a JSON object:\n"
+    '{{"decision": "disqualified" | "read_more" | "pass_to_pro", '
+    '"reason": "one sentence"}}\n\n'
+    "- disqualified: clearly not a relevant job vacancy — stop here\n"
+    "- read_more: cannot decide from these 3 lines — show me the next 3\n"
+    "- pass_to_pro: looks like a relevant vacancy — escalate\n\n"
+    "Posting so far:\n{seen}"
+)
 
 
-def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str,
-                       flash_prompt: str) -> tuple[bool, str]:
-    """Read one line at a time until Flash decides. Returns (escalate, reason)."""
+def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
+                      api_key: str) -> tuple[bool, str]:
+    """Read 3 lines at a time until Flash decides. Returns (flag, reason)."""
     lines = [l for l in content.splitlines() if l.strip()]
     if not lines:
         return False, "empty message"
 
+    i = 0
     final_reason = ""
-    for i, line in enumerate(lines):
-        is_last = (i == len(lines) - 1)
-        seen = "\n".join(lines[: i + 1])
-        is_last_text = "This is the last line of the post. " if is_last else ""
-        next_hint = "(On this last line, 'next' will escalate to full evaluation.)\n" if is_last else ""
-
-        prompt = f"{flash_prompt}\n{is_last_text}{next_hint}\nLines read so far:\n{seen}"
+    while i < len(lines):
+        window = lines[i:i + 3]
+        seen = "\n".join(lines[:i + len(window)])
+        prompt = FLASH_PROMPT.format(
+            desired_roles=desired_roles,
+            acceptable_roles=acceptable_roles,
+            seen=seen,
+        )
 
         try:
             raw = call_deepseek(FLASH_MODEL, prompt, api_key)
             result = extract_json(raw)
-            decision = result.get("decision", "irrelevant")
+            decision = result.get("decision", "disqualified")
             reason = result.get("reason", "")
             final_reason = reason
 
-            logging.info("[%s/%s] flash line %d/%d → %s | %s",
-                         channel, message_id, i + 1, len(lines), decision, reason)
+            logging.info("flash window %d-%d/%d → %s | %s",
+                         i + 1, min(i + 3, len(lines)), len(lines), decision, reason)
 
-            if decision == "irrelevant":
+            if decision == "disqualified":
                 return False, reason
-            if decision == "relevant" or (is_last and decision == "next"):
+            if decision == "pass_to_pro":
                 return True, reason
+            # "read_more" — advance by 3 lines
+            i += 3
 
         except Exception as e:
-            logging.error("[%s/%s] flash line %d error: %s", channel, message_id, i + 1, e)
+            logging.error("flash window %d error: %s", i + 1, e)
             return False, str(e)
 
-    return False, final_reason
+    # Exhausted content while reading more — escalate (conservative)
+    return True, final_reason
 
 
 # ---------------------------------------------------------------------------
@@ -187,16 +187,9 @@ def main() -> None:
             path.unlink(missing_ok=True)
             continue
 
-        strategy = ch_config["flash_strategy"]
-        flash_prompt = ch_config["flash_prompt"]
-        if strategy == "batch_18_lines":
-            flag, flash_reason = flash_batch(content, message_id, channel, api_key, flash_prompt)
-        elif strategy == "line_by_line":
-            flag, flash_reason = flash_line_by_line(content, message_id, channel, api_key, flash_prompt)
-        else:
-            logging.warning("[%s/%s] unknown strategy %s, skipping", channel, message_id, strategy)
-            path.unlink(missing_ok=True)
-            continue
+        desired_roles = ch_config.get("desired_roles", "")
+        acceptable_roles = ch_config.get("acceptable_roles", "")
+        flag, flash_reason = flash_incremental(content, desired_roles, acceptable_roles, api_key)
 
         record["flash"] = {
             "model": FLASH_MODEL,
