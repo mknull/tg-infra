@@ -20,3 +20,4 @@ __pycache__/
 .claude/
 source/
 skills/
+state/searxng/
