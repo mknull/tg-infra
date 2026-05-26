@@ -61,11 +61,14 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
     while i < len(lines):
         window = lines[i:i + 3]
         seen = "\n".join(lines[:i + len(window)])
+        direction = _load_direction_small()
         prompt = FLASH_PROMPT.format(
             desired_roles=desired_roles,
             acceptable_roles=acceptable_roles,
             seen=seen,
         )
+        if direction and direction != "no change":
+            prompt += f"\n\nCurrent preference deltas:\n{direction}"
 
         try:
             raw = call_deepseek(FLASH_MODEL, prompt, api_key)
@@ -90,6 +93,12 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
 
     # Exhausted content while reading more — escalate (conservative)
     return True, final_reason
+
+
+def _load_direction_small() -> str:
+    """Load CurrentDirectionSmall for Flash context."""
+    from lib import load_current_direction_small
+    return load_current_direction_small()
 
 
 # ---------------------------------------------------------------------------

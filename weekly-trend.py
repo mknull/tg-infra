@@ -135,6 +135,98 @@ def build_report(profile: str, agg: dict, sends: list[dict]) -> str:
     return call_deepseek(PRO_MODEL, prompt, api_key)
 
 
+_SMELL_PROMPT = (
+    "You are auditing a job triage pipeline. Given a week of tagged decisions, "
+    "find suspicious patterns:\n\n"
+    "CANDIDATE PROFILE:\n{profile}\n\n"
+    "CURRENT DIRECTION:\n{direction}\n\n"
+    "SENT BUT IGNORED (possible false positives — sent to user, no engagement):\n{sent_not_engaged}\n\n"
+    "FLASH-DISQUALIFIED (possible false negatives — Flash skipped, tags look "
+    "relevant to profile):\n{flash_skipped}\n\n"
+    "Identify 1-3 patterns that deserve investigation. If the week looks clean, "
+    'respond with exactly: "No suspicious patterns detected." '
+    "Keep it under 200 words. Be specific about which roles, skills, or domains "
+    "look suspicious. Write in plain English — no markdown, no bullet points."
+)
+
+_FEEDBACK_PROMPT = (
+    "\n\n---\n"
+    "Reply to this email or send /direction to the bot with any changes:\n"
+    "- New interests or roles to watch for\n"
+    "- Roles or domains to deprioritize\n"
+    "- Skills you're building that should affect matching\n"
+    "- Companies or locations of interest\n"
+    "The CurrentDirection files are attached — what the system currently believes."
+)
+
+
+def _build_smell_section(tagged: list[dict], sends: list[dict],
+                         profile: str, direction: str, api_key: str) -> str:
+    """Generate smell investigation section. Returns empty string if clean."""
+    if not tagged:
+        return ""
+
+    # Identify sent-but-ignored (false positive candidates)
+    send_ids = {s["msg_id"] for s in sends if "msg_id" in s}
+    sent_not_engaged = [
+        r for r in tagged
+        if r.get("pro", {}).get("decision") == "send"
+        and r.get("msg_id") not in send_ids
+    ]
+
+    # Identify flash-disqualified with relevant-looking tags
+    flash_skipped = [
+        r for r in tagged
+        if r.get("flash", {}).get("decision") == "skip"
+        and r.get("pro", {}).get("tags", {}).get("role_title")
+    ]
+
+    if not sent_not_engaged and not flash_skipped:
+        return ""
+
+    # Build summaries
+    def _summarize(records, max_n=5):
+        lines = []
+        for r in records[:max_n]:
+            tags = r.get("pro", {}).get("tags", {})
+            lines.append(
+                f"  - {tags.get('role_title', '?')} "
+                f"({tags.get('domain', '?')}, skills: {tags.get('skills', [])})"
+            )
+        return "\n".join(lines) if lines else "(none)"
+
+    prompt = _SMELL_PROMPT.format(
+        profile=profile,
+        direction=direction or "(not set)",
+        sent_not_engaged=_summarize(sent_not_engaged),
+        flash_skipped=_summarize(flash_skipped),
+    )
+
+    try:
+        raw = call_deepseek(PRO_MODEL, prompt, api_key)
+        text = raw.strip()
+    except Exception as e:
+        logging.error("smell investigation failed: %s", e)
+        return ""
+
+    if "No suspicious patterns" in text or "no suspicious patterns" in text.lower():
+        return ""
+    return text
+
+
+def _get_direction_attachments() -> list[dict]:
+    """Return CurrentDirection files as email attachments."""
+    attachments = []
+    for name in ("current-direction.md", "current-direction-small.md"):
+        path = STATE_DIR / name
+        if path.exists():
+            attachments.append({
+                "filename": name.replace(".md", ".txt") if "small" in name else name,
+                "content": path.read_text(),
+            })
+    return attachments
+
+
 def build_raw_section(agg: dict, sends: list[dict]) -> str:
     """Fallback: plain stats section when Pro is unavailable."""
     lines = [
@@ -200,6 +292,15 @@ def main() -> None:
         trend_error = e
         trend_text = None
 
+    # Smell investigation (Part 2)
+    direction = ""
+    try:
+        from lib import load_current_direction
+        direction = load_current_direction()
+    except Exception:
+        pass
+    smell_text = _build_smell_section(tagged, sends, profile, direction, api_key)
+
     # Compose email body
     subject = f"Weekly Job Market Trend Report ({week_start} – {week_end})"
     body_parts = [
@@ -215,8 +316,19 @@ def main() -> None:
     else:
         body_parts.append(f"(Trend analysis unavailable: {trend_error})")
     body_parts.append("")
+
+    if smell_text:
+        body_parts.append("---")
+        body_parts.append("DECISION AUDIT — patterns worth investigating:")
+        body_parts.append(smell_text)
+        body_parts.append("")
+
     body_parts.append(build_raw_section(agg, sends))
+    body_parts.append(_FEEDBACK_PROMPT)
     body = "\n".join(body_parts)
+    # Note: send_email doesn't support attachments yet; direction files
+    # are referenced in the feedback prompt but not attached until
+    # send_email is extended with MIME multipart support.
 
     if DRY_RUN:
         print(f"Subject: {subject}")

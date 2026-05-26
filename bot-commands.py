@@ -343,6 +343,30 @@ def main() -> None:
             send_message(token, chat_id,
                          "/briefme — Reply to a job posting with this command to get a brief.\n"
                          "/status — Check bot status.")
+        elif command == "/direction":
+            feedback = text.split(" ", 1)[1] if " " in text else ""
+            if not feedback:
+                from lib import load_current_direction
+                current = load_current_direction()
+                if current:
+                    send_message(token, chat_id,
+                                 f"Current direction:\n\n{current[:3000]}")
+                else:
+                    send_message(token, chat_id,
+                                 "No direction set. Reply to the weekly email or send "
+                                 "/direction followed by your preferences.")
+            else:
+                send_message(token, chat_id, "Got it — updating your direction...")
+                try:
+                    from lib import update_current_direction
+                    update_current_direction(feedback, api_key)
+                    from lib import load_current_direction
+                    updated = load_current_direction()
+                    preview = updated[:500] + ("..." if len(updated) > 500 else "")
+                    send_message(token, chat_id, f"Updated:\n\n{preview}")
+                except Exception as e:
+                    logging.error("[%s] /direction update failed: %s", chat_id, e)
+                    send_message(token, chat_id, "Failed to update direction. Try again.")
         elif command == "/status":
             send_message(token, chat_id,
                          f"Bot is running. Last update: {cursor}.")
