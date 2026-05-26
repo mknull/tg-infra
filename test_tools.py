@@ -5,16 +5,19 @@ Run:  ./jobsmcp/bin/python3 test_tools.py
 """
 
 import unittest
+from pathlib import Path
 
-from guardrails import RateLimiter, SOURCE_DIR, BRIEFS_DIR
+from guardrails import RateLimiter, BRIEFS_DIR
 from tools import read_file, truncate, web_search, web_fetch, md_to_pdf
+
+PROJECT = Path(__file__).resolve().parent
 
 
 class TestReadFile(unittest.TestCase):
 
-    def test_reads_source_file(self):
-        text = read_file(SOURCE_DIR / "interests.txt")
-        self.assertIn("mechanistic computational models", text)
+    def test_reads_and_returns_file_content(self):
+        text = read_file(PROJECT / "README.md")
+        self.assertIn("# telegram_MCP", text)
 
     def test_blocks_outside_project(self):
         with self.assertRaises(PermissionError):

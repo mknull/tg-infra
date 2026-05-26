@@ -13,7 +13,7 @@ from agent import build_system_prompt, TOOLS, MAX_TURNS, run_agent
 
 class TestSystemPrompt(unittest.TestCase):
 
-    def test_prompt_includes_skill_references(self):
+    def test_prompt_includes_essential_structure(self):
         prompt = build_system_prompt()
         self.assertIn("decision-grade brief", prompt)
         self.assertIn("Brief structure", prompt)

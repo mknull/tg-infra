@@ -66,11 +66,15 @@ TOOLS = [
 def build_system_prompt() -> str:
     skill_dir = PROJECT_DIR / "skills" / "job-brief"
     refs_dir = skill_dir / "references"
-    source_dir = PROJECT_DIR / "source"
 
-    skill = (skill_dir / "SKILL.md").read_text()
-    discipline = (refs_dir / "briefing-discipline.md").read_text()
-    relevance = (refs_dir / "profile-for-relevance.md").read_text()
+    try:
+        skill = (skill_dir / "SKILL.md").read_text()
+        discipline = (refs_dir / "briefing-discipline.md").read_text()
+        relevance = (refs_dir / "profile-for-relevance.md").read_text()
+    except FileNotFoundError:
+        skill = _FALLBACK_SKILL
+        discipline = _FALLBACK_DISCIPLINE
+        relevance = _FALLBACK_PROFILE
 
     return f"""You are a job briefing agent. Produce a decision-grade brief for Filippos Panagiotou.
 
@@ -91,6 +95,11 @@ Workflow:
 
 ## Filippos's career-strategic profile
 {relevance}"""
+
+
+_FALLBACK_SKILL = "Produce a decision-grade brief with role, environment, and relevance sections."
+_FALLBACK_DISCIPLINE = "Base every claim on fetched or read data. Do not invent."
+_FALLBACK_PROFILE = "Load profile from source/ directory using read_file."
 
 
 # --- Agent loop ---

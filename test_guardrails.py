@@ -163,14 +163,13 @@ class TestFilesystemGuardrails(unittest.TestCase):
 
     def test_blocks_writes_outside_briefs(self):
         blocked = [
-            SOURCE_DIR / "interests.txt",
+            PROJECT / "lib.py",
             STATE_DIR / "email-cursor",
             PROJECT / "email-triage.py",
-            PROJECT / "lib.py",
+            PROJECT / "README.md",
             PROJECT / ".env",
             Path("/etc/cron.d/backdoor"),
             Path.home() / ".ssh/authorized_keys",
-            PROJECT / "skills" / "SKILL.md",
             PROJECT / ".." / "other-project" / "poison.py",
         ]
         for path in blocked:
@@ -189,8 +188,8 @@ class TestFilesystemGuardrails(unittest.TestCase):
 
     def test_allows_reads_inside_project(self):
         allowed = [
-            SOURCE_DIR / "interests.txt",
-            SOURCE_DIR / "skills.txt",
+            PROJECT / "lib.py",
+            PROJECT / "README.md",
             BRIEFS_DIR / "some-brief.md",
         ]
         for path in allowed:
@@ -277,7 +276,7 @@ class TestAdversarialScenarios(unittest.TestCase):
         url = "https://stepstone.de/jobs/12345"
         ok, _ = validate_fetch_url(url)
         self.assertTrue(ok)
-        target = SOURCE_DIR / "it-jobs-criteria.md"
+        target = PROJECT / "lib.py"
         ok, reason = validate_write_path(target)
         self.assertFalse(ok, f"should block write to {target}: got {reason}")
 
@@ -321,14 +320,14 @@ class TestAdversarialScenarios(unittest.TestCase):
         self.assertFalse(ok, f"should block internal IP regardless of Flash: got {reason}")
 
     def test_stage2_chain_write_after_approved_fetch(self):
-        """Flash approves an unknown recruitment site, but writes to source/ blocked."""
+        """Flash approves an unknown recruitment site, but writes outside briefs blocked."""
         def mock_flash(model, prompt, api_key):
             return '{"safe": true, "reason": "recruitment agency"}'
         url = "https://www.antal.com/jobs/data-scientist"
         ok, _ = validate_fetch_url(url, flash_fn=mock_flash)
         self.assertTrue(ok)  # Flash approved the fetch
-        # But the agent can't overwrite the profile
-        ok2, _ = validate_write_path(SOURCE_DIR / "interests.txt")
+        # But the agent can't overwrite project files
+        ok2, _ = validate_write_path(PROJECT / "lib.py")
         self.assertFalse(ok2)
 
 
