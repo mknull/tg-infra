@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (weasyprint)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info
+
+      - name: Install pip deps
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover -s . -p 'test_*.py' -v
+
+      - name: Audit health check
+        run: ./audit --health

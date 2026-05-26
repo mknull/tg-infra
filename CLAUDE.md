@@ -19,7 +19,7 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 
 ## Commit credit
 
-All commit messages are credited to Filippos Panagiotou, DeepSeek (Flash + Pro via API), and the Claude Code harness. Anthropic models are not involved — the harness drives the session but the LLM backend is deepseek-v4-pro and deepseek-v4-flash.
+All commits are authored by Filippos Panagiotou. DeepSeek and the Claude Code harness are the toolchain — neither claims authorship.
 
 ## State
 
