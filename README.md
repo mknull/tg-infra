@@ -1,76 +1,97 @@
-# it-jobs
+# telegram_MCP
 
-Standalone pipeline that monitors job postings and research emails, runs two-stage DeepSeek triage, and forwards matches to your personal Telegram chat.
+A self-contained job-market intelligence pipeline. Monitors Telegram groups, Outlook inboxes, and recruitment sites — runs a two-stage DeepSeek triage to filter vacancies for relevance — delivers decision-grade briefs to a private Telegram chat. Built to run unattended under systemd with no third-party services.
 
-**No Claude Code or Anthropic tooling required.** Runs under systemd anywhere Python 3.10+ is available.
-
-## How it works
-
-### Telegram group pipeline
-1. `it-jobs-poller.py` — Telethon user-API client. Reads new messages from @it_jobs_cyprus, writes them to `~/.it-jobs/message_queue/`.
-2. `it-jobs-triage.py` — Two-stage DeepSeek filter:
-   - **Flash**: fast filter on the first ~15 lines — is it a relevant vacancy?
-   - **Pro**: full evaluation against `~/.it-jobs/it-jobs-criteria.md` — send or skip?
-
-### Email pipeline
-3. `email-triage.py` — Fetches new Inbox emails via Microsoft Graph API, two-stage filter:
-   - **Flash**: header-only (from + subject) — skip or read body?
-   - **Pro**: full body evaluation against `~/.it-jobs/email-triage-criteria.md` — send or skip?
-
-All three scripts run sequentially every 2 hours via the systemd timer.
-
-## Install
-
-```bash
-git clone <repo> it-jobs
-cd it-jobs
-./setup.sh
-```
-
-`setup.sh` will:
-- Create the `jobsmcp` venv and install dependencies
-- Create `~/.it-jobs/` with criteria templates and an empty `.env`
-- Generate and install the systemd service + timer (paths substituted at install time)
-
-## Configuration
-
-Fill in `~/.it-jobs/.env`:
+## Architecture
 
 ```
-TELEGRAM_BOT_TOKEN=        # bot that sends matches to your chat
-TELEGRAM_API_ID=           # from my.telegram.org (Telethon user API)
-TELEGRAM_API_HASH=         # from my.telegram.org
-DEEPSEEK_API_KEY=          # from platform.deepseek.com
-OUTLOOK_CLIENT_ID=         # Azure app registration client ID
+                  ┌──────────────────┐
+                  │  it-jobs-poller  │  Telethon user-API
+                  │  jobspy-poller   │  (planned)
+                  └────────┬─────────┘
+                           │ queue files
+                  ┌────────▼─────────┐
+                  │  it-jobs-triage  │  Flash → Pro → Telegram
+                  └──────────────────┘
+
+  ┌────────────────────┐
+  │   email-triage     │  Graph API → Flash → Pro → Telegram
+  └────────────────────┘
+
+  ┌────────────────────┐
+  │   bot-commands     │  /briefme agent ← DeepSeek function-calling
+  └────────────────────┘
+
+  ┌────────────────────┐
+  │      audit         │  Health checks, cascade topology, deviation detection
+  └────────────────────┘
 ```
 
-Edit the criteria files to match your profile:
-- `~/.it-jobs/it-jobs-criteria.md` — Telegram group triage rules
-- `~/.it-jobs/email-triage-criteria.md` — email triage rules
+Four systemd timers (bot-commands every 7 min, triage and poll every 30 min, email every 2 hours) run everything on a staggered cadence. The audit health check runs after the longest cycle and pings Telegram if anything broke.
 
-## First-run auth
+## Pipeline detail
 
-### Telethon (Telegram group polling)
-Interactive login required once to create the session file:
-```bash
-jobsmcp/bin/python3 it-jobs-poller.py
+### Two-stage triage (email and Telegram)
+
+Every message passes through a **Flash** model (deepseek-v4-flash, fast and cheap) that filters obvious mismatches — wrong domain, CV posted instead of a vacancy, non-technical roles. Messages that pass Flash get full body evaluation from a **Pro** model (deepseek-v4-pro) against Filippos Panagiotou's profile criteria. Matches are forwarded to Telegram with a structured summary.
+
+The cursor-based dedup (`receivedDateTime gt {cursor + 1s}`) prevents the Graph API's sub-second timestamp precision from creating infinite re-processing loops — a bug the audit tool caught and the pipeline self-heals from.
+
+### `/briefme` agent
+
+A DeepSeek function-calling agent that replaces the old single-pass prompt. When the user quotes a job posting and replies `/briefme`, the agent loads his profile files, searches for the company, fetches the listing, and produces a decision-grade brief covering the role, environment, and career-strategic fit. Output is converted to PDF and sent as a Telegram document.
+
+The agent operates with guardrailed tools: a two-stage URL validator (static blocklist → Flash classifier for unknown domains), filesystem sandbox (writes restricted to `workspace/briefs/`, reads to the project root), search query injection detection, and a per-brief rate limiter. 49 tests simulate adversarial tool calls trying to break each guardrail.
+
+### Audit discipline
+
+Every decision across every pipeline is recorded to `state/audit/`. The `./audit` CLI surfaces:
+
+- **Default view** — recent records with inline duplicate warnings
+- **`--summary`** — per-source stats (records vs unique, decision distributions)
+- **`--topology`** — expected vs actual cascade paths with deviation detection
+- **`--health`** — machine-readable check that exits 1 on duplicate evals, broken cascades, agent failures, or tool errors (designed to run after every email-ingest cycle)
+
+The audit found the cursor precision bug, the false-positive minute-granularity issue, and the broken cascade from the pre-fix duplicate runs — each fixed before the user noticed them in production.
+
+### Guardrails
+
+All agent tool access is gated through `guardrails.py`: fetch URL validation (scheme blocks, internal IP blocks, trusted domain fast-path, Flash classifier for unknowns), search query injection detection, filesystem sandbox (`.resolve()` on every path), content sanitisation (wraps fetched text in isolation tags), and a per-brief rate limiter. 27 adversarial tests verify each layer fails closed.
+
+## Project structure
+
 ```
-Follow the prompts (phone number + OTP). Session saved to `~/.it-jobs/it-jobs-session.session`.
-
-### Outlook (email)
-The Outlook OAuth token (`~/.it-jobs/outlook-token.json`) is obtained once via browser-based login. On a new device, copy it from your previous machine:
-```bash
-scp old-host:~/.it-jobs/outlook-token.json ~/.it-jobs/outlook-token.json
-chmod 600 ~/.it-jobs/outlook-token.json
+├── lib.py                  Shared utilities (env, DeepSeek, Telegram, audit)
+├── guardrails.py           Agent tool access control
+├── tools.py                Agent tools (read_file, web_search, web_fetch, md_to_pdf)
+├── agent.py                DeepSeek function-calling loop + system prompt
+├── audit                   CLI audit tool
+│
+├── email-triage.py         Outlook → Flash → Pro → Telegram
+├── email-ingest-wrap       Email ingest + audit health check + Telegram alert
+│
+├── it-jobs-poller.py       Telethon poller (Telegram groups → queue)
+├── it-jobs-triage.py       Queue → Flash → Pro → Telegram
+│
+├── bot-commands.py         Telegram bot command handler (/briefme, /start, /status)
+│
+├── skills/job-brief/       /briefme skill doc + references
+├── source/                 Filippos's profile (interests, skills, tech_stack)
+├── state/                  Runtime state (cursors, audit, queue, logs, tokens)
+│
+├── test_guardrails.py      27 adversarial tests
+├── test_tools.py           14 tool tests
+├── test_agent.py           8 agent loop tests
+│
+└── requirements.txt        telethon, markdown, weasyprint, playwright
 ```
-The script refreshes the token automatically on each run — you never need to re-authenticate manually.
 
-## Start
+## Dependencies
 
-```bash
-systemctl --user start it-jobs.timer
-systemctl --user status it-jobs.timer
-```
+- Python ≥ 3.10, a single venv, four pip packages
+- DeepSeek API (flash + pro models)
+- Microsoft Graph API (Outlook email)
+- Telethon (Telegram MTProto user-API)
+- systemd (user timers, no root)
 
-Logs: `~/.it-jobs/it-jobs.log`  
-Audit trails: `~/.it-jobs/it-jobs-triage.jsonl`, `~/.it-jobs/email-triage.jsonl`
+No LangChain. No hosted scrapers. No third-party APIs beyond the three the pipeline targets.
