@@ -26,18 +26,11 @@ ENV_FILE = STATE_DIR / ".env"
 
 # Each entry: username, cursor file (preserves existing name for it_jobs_cyprus),
 # queue filename prefix used by triage to route messages.
-CHANNELS = [
-    {
-        "username": "it_jobs_cyprus",
-        "cursor_file": STATE_DIR / "it-jobs-cursor",
-        "queue_prefix": "itjobs",
-    },
-    {
-        "username": "cyithr",
-        "cursor_file": STATE_DIR / "cyithr-cursor",
-        "queue_prefix": "cyithr",
-    },
-]
+# Channel config lives in state/channels.json — one entry per monitored channel.
+
+def load_channels() -> list[dict]:
+    with (STATE_DIR / "channels.json").open() as f:
+        return json.loads(f.read())["channels"]
 
 
 def load_env() -> dict:
@@ -68,7 +61,7 @@ def save_cursor(cursor_file: Path, msg_id: int) -> None:
 
 async def poll_channel(client: TelegramClient, channel: dict) -> None:
     username = channel["username"]
-    cursor_file = channel["cursor_file"]
+    cursor_file = STATE_DIR / f"{username}-cursor"
     queue_prefix = channel["queue_prefix"]
 
     cursor = load_cursor(cursor_file)
@@ -137,7 +130,7 @@ async def poll() -> None:
     client = TelegramClient(str(SESSION_FILE), api_id, api_hash)
     await client.start()
 
-    for channel in CHANNELS:
+    for channel in load_channels():
         await poll_channel(client, channel)
 
     await client.disconnect()

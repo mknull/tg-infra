@@ -24,25 +24,22 @@ AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
 
 
+def _load_channel_config() -> dict[str, dict]:
+    """Load per-channel config from channels.json, keyed by username."""
+    with (STATE_DIR / "channels.json").open() as f:
+        channels = json.loads(f.read())["channels"]
+    return {ch["username"]: ch for ch in channels}
+
+
 # ---------------------------------------------------------------------------
-# it_jobs_cyprus: batch first-18-lines Flash pass
+# Flash strategies — prompt from channel config, content handled here
 # ---------------------------------------------------------------------------
 
-def flash_first_pass(content: str, message_id: str, channel: str, api_key: str) -> tuple[bool, str]:
-    """Return (flag, reason). flag=True if posting should be escalated to Pro."""
+def flash_batch(content: str, message_id: str, channel: str, api_key: str,
+                flash_prompt: str) -> tuple[bool, str]:
+    """Return (flag, reason). Sends first 18 lines as the posting content."""
     first_lines = "\n".join(content.splitlines()[:18])
-    prompt = (
-        "You are a job posting filter. Examine the following first lines of a posting "
-        "from a tech-jobs Telegram group.\n\n"
-        'Respond with ONLY a JSON object, no other text: '
-        '{"is_vacancy": true/false, "flag": true/false, "reason": "one sentence"}\n\n'
-        "is_vacancy: true if this is a job offer; false if someone is seeking work, "
-        "posting their CV, or it's off-topic.\n"
-        "flag: true if the role involves Python, ML, AI, LLMs, RAG, embeddings, "
-        "data science, backend engineering, research engineering, or similar.\n"
-        "flag must be false if is_vacancy is false.\n\n"
-        f"Posting (first lines):\n{first_lines}"
-    )
+    prompt = f"{flash_prompt}\n\nPosting (first lines):\n{first_lines}"
     try:
         raw = call_deepseek(FLASH_MODEL, prompt, api_key)
         result = extract_json(raw)
@@ -57,13 +54,9 @@ def flash_first_pass(content: str, message_id: str, channel: str, api_key: str) 
         return False, str(e)
 
 
-# ---------------------------------------------------------------------------
-# cyithr: line-by-line Flash pass
-# ---------------------------------------------------------------------------
-
-def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str) -> tuple[bool, str]:
+def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str,
+                       flash_prompt: str) -> tuple[bool, str]:
     """Read one line at a time until Flash decides. Returns (escalate, reason)."""
-    criteria = CRITERIA_FILE.read_text()
     lines = [l for l in content.splitlines() if l.strip()]
     if not lines:
         return False, "empty message"
@@ -72,19 +65,10 @@ def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str
     for i, line in enumerate(lines):
         is_last = (i == len(lines) - 1)
         seen = "\n".join(lines[: i + 1])
+        is_last_text = "This is the last line of the post. " if is_last else ""
+        next_hint = "(On this last line, 'next' will escalate to full evaluation.)\n" if is_last else ""
 
-        prompt = (
-            "You are a job posting filter reading one line at a time.\n\n"
-            f"CRITERIA:\n{criteria}\n\n"
-            f"Lines read so far:\n{seen}\n\n"
-            + ("This is the last line of the post. " if is_last else "")
-            + "Respond with ONLY a JSON object: "
-            '{"decision": "irrelevant" | "relevant" | "next", "reason": "one sentence"}\n\n'
-            "- irrelevant: clearly not a relevant job vacancy — stop here\n"
-            "- relevant: looks like a relevant vacancy — escalate to full evaluation\n"
-            "- next: cannot decide yet — read the next line\n"
-            + ("(On this last line, 'next' will escalate to full evaluation.)\n" if is_last else "")
-        )
+        prompt = f"{flash_prompt}\n{is_last_text}{next_hint}\nLines read so far:\n{seen}"
 
         try:
             raw = call_deepseek(FLASH_MODEL, prompt, api_key)
@@ -100,7 +84,6 @@ def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str
                 return False, reason
             if decision == "relevant" or (is_last and decision == "next"):
                 return True, reason
-            # "next" with more lines remaining — continue
 
         except Exception as e:
             logging.error("[%s/%s] flash line %d error: %s", channel, message_id, i + 1, e)
@@ -198,12 +181,20 @@ def main() -> None:
 
         # --- Flash ---
         flash_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        if channel == "it_jobs_cyprus":
-            flag, flash_reason = flash_first_pass(content, message_id, channel, api_key)
-        elif channel == "cyithr":
-            flag, flash_reason = flash_line_by_line(content, message_id, channel, api_key)
+        ch_config = _load_channel_config().get(channel)
+        if not ch_config:
+            logging.warning("[%s/%s] channel not in channels.json, skipping", channel, message_id)
+            path.unlink(missing_ok=True)
+            continue
+
+        strategy = ch_config["flash_strategy"]
+        flash_prompt = ch_config["flash_prompt"]
+        if strategy == "batch_18_lines":
+            flag, flash_reason = flash_batch(content, message_id, channel, api_key, flash_prompt)
+        elif strategy == "line_by_line":
+            flag, flash_reason = flash_line_by_line(content, message_id, channel, api_key, flash_prompt)
         else:
-            logging.warning("[%s/%s] unknown channel, skipping", channel, message_id)
+            logging.warning("[%s/%s] unknown strategy %s, skipping", channel, message_id, strategy)
             path.unlink(missing_ok=True)
             continue
 

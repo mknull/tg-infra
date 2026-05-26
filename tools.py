@@ -2,6 +2,7 @@
 """Tools for the /briefme agent — web_fetch, web_search, read_file, pdf_writer."""
 
 import json
+import os
 import re
 import time
 import urllib.request
@@ -38,7 +39,7 @@ def read_file(path: Path | str) -> str:
 # web_search — SearXNG (self-hosted)
 # ---------------------------------------------------------------------------
 
-SEARXNG_URL = "http://localhost:8080/search"
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8080/search")
 
 
 def web_search(query: str, max_results: int = 5) -> str:
@@ -55,7 +56,7 @@ def web_search(query: str, max_results: int = 5) -> str:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read())
     except Exception as e:
-        return f"search error: {e}"
+        return f"Web search unavailable: SearXNG not reachable ({e}). Set SEARXNG_URL or ensure the service is running."
 
     results = data.get("results", [])[:max_results]
     if not results:

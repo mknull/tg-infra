@@ -1,0 +1,24 @@
+{
+  "channels": [
+    {
+      "username": "it_jobs_cyprus",
+      "queue_prefix": "itjobs",
+      "description": "Cyprus IT job postings — companies and recruiters post open roles",
+      "message_format": "Structured job ads, 15-30 lines. Role title, company, requirements, tech stack, how to apply. Hashtags at top.",
+      "desired_roles": "ML research scientist, computational neuroscience, probabilistic ML, cognitive systems",
+      "acceptable_roles": "Data scientist, ML engineer, research engineer, AI engineer, backend Python",
+      "flash_strategy": "batch_18_lines",
+      "flash_prompt": "You are a job posting filter. Examine the following first lines of a posting from a tech-jobs Telegram group.\n\nRespond with ONLY a JSON object, no other text: {\"is_vacancy\": true/false, \"flag\": true/false, \"reason\": \"one sentence\"}\n\nis_vacancy: true if this is a job offer; false if someone is seeking work, posting their CV, or it's off-topic.\nflag: true if the role involves Python, ML, AI, LLMs, RAG, embeddings, data science, backend engineering, research engineering, or similar.\nflag must be false if is_vacancy is false."
+    },
+    {
+      "username": "cyithr",
+      "queue_prefix": "cyithr",
+      "description": "Cyprus HR and recruitment channel — recruiters and companies post openings",
+      "message_format": "Single-line or very short posts with hashtags. No structure, limited detail.",
+      "desired_roles": "ML research, computational neuroscience, cognitive systems",
+      "acceptable_roles": "Data science, ML engineering, research positions, technical roles in Cyprus",
+      "flash_strategy": "line_by_line",
+      "flash_prompt": "You are a job posting filter reading one line at a time.\n\nRespond with ONLY a JSON object: {\"decision\": \"irrelevant\" | \"relevant\" | \"next\", \"reason\": \"one sentence\"}\n\n- irrelevant: clearly not a job vacancy relevant to the candidate — stop here\n- relevant: looks like a relevant vacancy — escalate to full evaluation\n- next: cannot decide yet — read the next line"
+    }
+  ]
+}

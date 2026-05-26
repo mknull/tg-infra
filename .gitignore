@@ -2,9 +2,7 @@ state/.env
 state/outlook-token.json
 state/it-jobs-session.session
 state/bot-cursor
-state/cyithr-cursor
-state/email-cursor
-state/it-jobs-cursor
+state/*-cursor
 state/message_queue/
 state/messages/
 state/audit/

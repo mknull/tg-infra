@@ -15,7 +15,21 @@ STATE_DIR = PROJECT_DIR / "state"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 FLASH_MODEL = "deepseek-v4-flash"
 PRO_MODEL = "deepseek-v4-pro"
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+
+
+def _get_config(key: str, default: str) -> str:
+    """Read config from environment, falling back to .env file."""
+    val = os.environ.get(key)
+    if val:
+        return val
+    try:
+        return load_env().get(key, default)
+    except Exception:
+        return default
+
+
+USER_NAME = _get_config("USER_NAME", "the user")
+TELEGRAM_CHAT_ID = _get_config("TELEGRAM_CHAT_ID", "")
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
 TOKEN_FILE = STATE_DIR / "outlook-token.json"

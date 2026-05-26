@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import DEEPSEEK_API_URL, PRO_MODEL, STATE_DIR, PROJECT_DIR, write_audit
+from lib import DEEPSEEK_API_URL, PRO_MODEL, STATE_DIR, PROJECT_DIR, USER_NAME, write_audit
 from tools import read_file, web_search, web_fetch, md_to_pdf
 from guardrails import RateLimiter, BRIEFS_DIR
 
@@ -21,7 +21,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "Read a file from the project directory. Use to load Filippos's profile (interests, skills, tech stack) or the briefing references.",
+            "description": "Read a file from the project directory. Use to load " + USER_NAME + "'s profile (interests, skills, tech stack) or the briefing references.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -76,12 +76,12 @@ def build_system_prompt() -> str:
         discipline = _FALLBACK_DISCIPLINE
         relevance = _FALLBACK_PROFILE
 
-    return f"""You are a job briefing agent. Produce a decision-grade brief for Filippos Panagiotou.
+    return f"""You are a job briefing agent. Produce a decision-grade brief for {USER_NAME}.
 
-You have tools: read_file (load Filippos's profile), web_search (find funding, team, news, salary data), web_fetch (read specific pages like job listings).
+You have tools: read_file (load {USER_NAME}'s profile), web_search (find funding, team, news, salary data), web_fetch (read specific pages like job listings).
 
 Workflow:
-1. Load Filippos's profile with read_file (interests, skills, tech_stack from source/)
+1. Load {USER_NAME}'s profile with read_file (interests, skills, tech_stack from source/)
 2. Search for the company/role — funding, Glassdoor, news, alumni trajectories
 3. Fetch the job listing page if a URL was provided
 4. Write the brief following the structure below
@@ -93,7 +93,7 @@ Workflow:
 ## Briefing discipline
 {discipline}
 
-## Filippos's career-strategic profile
+## {USER_NAME}'s career-strategic profile
 {relevance}"""
 
 

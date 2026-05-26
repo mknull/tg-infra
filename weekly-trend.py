@@ -23,7 +23,7 @@ DRY_RUN = "--dry-run" in sys.argv
 
 
 def load_profile() -> str:
-    """Load Filippos's profile files. Returns empty string if missing."""
+    """Load the candidate's profile files. Returns empty string if missing."""
     source_dir = PROJECT_DIR / "source"
     parts = []
     for name in ("interests.txt", "skills.txt", "tech_stack.txt"):
