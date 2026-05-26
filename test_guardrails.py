@@ -72,7 +72,7 @@ class TestFetchGuardrails(unittest.TestCase):
     def test_blocks_file_and_dangerous_schemes(self):
         blocked = [
             "file:///etc/passwd",
-            "file:///home/filippos/.ssh/id_rsa",
+            f"file://{Path.home() / '.ssh/id_rsa'}",
             "javascript:alert(1)",
             "data:text/html,<script>alert(1)</script>",
             "FTP://example.com/malware.exe",
@@ -169,7 +169,7 @@ class TestFilesystemGuardrails(unittest.TestCase):
             PROJECT / "lib.py",
             PROJECT / ".env",
             Path("/etc/cron.d/backdoor"),
-            Path("/home/filippos/.ssh/authorized_keys"),
+            Path.home() / ".ssh/authorized_keys",
             PROJECT / "skills" / "SKILL.md",
             PROJECT / ".." / "other-project" / "poison.py",
         ]
@@ -180,7 +180,7 @@ class TestFilesystemGuardrails(unittest.TestCase):
     def test_blocks_reads_outside_project(self):
         blocked = [
             Path("/etc/passwd"),
-            Path("/home/filippos/.ssh/id_rsa"),
+            Path.home() / ".ssh/id_rsa",
             Path("/proc/self/environ"),
         ]
         for path in blocked:

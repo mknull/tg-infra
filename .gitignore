@@ -18,3 +18,5 @@ jobsmcp/
 __pycache__/
 *.pyc
 .claude/
+source/
+skills/

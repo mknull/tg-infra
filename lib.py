@@ -3,6 +3,7 @@
 
 import json
 import logging
+import os
 import urllib.request
 from pathlib import Path
 
@@ -12,7 +13,7 @@ STATE_DIR = PROJECT_DIR / "state"
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 FLASH_MODEL = "deepseek-v4-flash"
 PRO_MODEL = "deepseek-v4-pro"
-TELEGRAM_CHAT_ID = "CHAT_ID_PLACEHOLDER"
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 
 def load_env(path: Path | None = None) -> dict:
