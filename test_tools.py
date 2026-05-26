@@ -4,12 +4,10 @@
 Run:  ./jobsmcp/bin/python3 test_tools.py
 """
 
-import tempfile
 import unittest
-from pathlib import Path
 
 from guardrails import RateLimiter, SOURCE_DIR, BRIEFS_DIR
-from tools import read_file, web_search, web_fetch, md_to_pdf
+from tools import read_file, truncate, web_search, web_fetch, md_to_pdf
 
 
 class TestReadFile(unittest.TestCase):
@@ -23,17 +21,9 @@ class TestReadFile(unittest.TestCase):
             read_file("/etc/passwd")
 
     def test_truncates_large_files(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False,
-                                         dir=BRIEFS_DIR) as f:
-            f.write("word " * 10000)
-            f.flush()
-            path = Path(f.name)
-        try:
-            text = read_file(path)
-            self.assertIn("[truncated]", text)
-            self.assertLess(len(text), 10000)
-        finally:
-            path.unlink()
+        text = truncate("word " * 10000)
+        self.assertIn("[truncated]", text)
+        self.assertLess(len(text), 10000)
 
     def test_file_not_found(self):
         with self.assertRaises(FileNotFoundError):
@@ -90,25 +80,19 @@ class TestWebFetch(unittest.TestCase):
 class TestPdfWriter(unittest.TestCase):
 
     def test_converts_md_to_pdf(self):
-        md_path = BRIEFS_DIR / "test-brief.md"
-        md_path.write_text("# Test Brief\n\nThis is a **test** brief.")
+        pdf_path = md_to_pdf("# Test Brief\n\nThis is a **test** brief.")
         try:
-            pdf_path = md_to_pdf(md_path)
             self.assertTrue(pdf_path.exists())
             self.assertGreater(pdf_path.stat().st_size, 100)
-            pdf_path.unlink()
         finally:
-            md_path.unlink()
+            pdf_path.unlink()
 
     def test_handles_empty_brief(self):
-        md_path = BRIEFS_DIR / "empty.md"
-        md_path.write_text("")
+        pdf_path = md_to_pdf("")
         try:
-            pdf_path = md_to_pdf(md_path)
             self.assertTrue(pdf_path.exists())
-            pdf_path.unlink()
         finally:
-            md_path.unlink()
+            pdf_path.unlink()
 
 
 if __name__ == "__main__":

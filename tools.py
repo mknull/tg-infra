@@ -16,6 +16,13 @@ from guardrails import (validate_fetch_url, validate_search_query,
 # read_file
 # ---------------------------------------------------------------------------
 
+def truncate(text: str, max_len: int = MAX_CONTENT_LENGTH) -> str:
+    """Truncate text that exceeds max_len, appending a marker."""
+    if len(text) > max_len:
+        return text[:max_len] + "\n\n[truncated]"
+    return text
+
+
 def read_file(path: Path | str) -> str:
     """Read a file from the project directory. Guardrailed to project/tmp only."""
     path = Path(path)
@@ -24,10 +31,7 @@ def read_file(path: Path | str) -> str:
         raise PermissionError(f"read blocked: {reason}")
     if not path.exists():
         raise FileNotFoundError(f"not found: {path}")
-    text = path.read_text()
-    if len(text) > MAX_CONTENT_LENGTH:
-        text = text[:MAX_CONTENT_LENGTH] + "\n\n[truncated]"
-    return text
+    return truncate(path.read_text())
 
 
 # ---------------------------------------------------------------------------
@@ -113,13 +117,17 @@ def web_fetch(url: str, flash_fn=None, rate_limiter: RateLimiter | None = None) 
 # pdf_writer — converts markdown brief to PDF
 # ---------------------------------------------------------------------------
 
-def md_to_pdf(md_path: Path) -> Path:
-    """Convert a markdown brief to PDF. Returns path to the PDF file."""
+def md_to_pdf(markdown_text: str, output_path: Path | None = None) -> Path:
+    """Convert markdown text to PDF. Returns path to the PDF file."""
     import markdown
     from weasyprint import HTML
+    from datetime import datetime, timezone
 
-    md_text = md_path.read_text()
-    html_body = markdown.markdown(md_text, extensions=["extra", "sane_lists"])
+    if output_path is None:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        output_path = BRIEFS_DIR / f"brief-{ts}.pdf"
+
+    html_body = markdown.markdown(markdown_text, extensions=["extra", "sane_lists"])
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -136,6 +144,5 @@ def md_to_pdf(md_path: Path) -> Path:
 <body>{html_body}</body>
 </html>"""
 
-    pdf_path = md_path.with_suffix(".pdf")
-    HTML(string=html).write_pdf(str(pdf_path))
-    return pdf_path
+    HTML(string=html).write_pdf(str(output_path))
+    return output_path

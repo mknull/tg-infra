@@ -220,7 +220,7 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
 
     from tools import md_to_pdf
     try:
-        pdf_path = md_to_pdf(brief_path)
+        pdf_path = md_to_pdf(brief, brief_path.with_suffix(".pdf"))
     except Exception as e:
         logging.error("PDF conversion failed, falling back to markdown: %s", e)
         pdf_path = brief_path
