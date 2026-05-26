@@ -176,6 +176,123 @@ def ensure_valid_token(env: dict) -> str:
     return new_token["access_token"]
 
 
+def load_delivery_config() -> dict:
+    """Load delivery routing config, with sensible defaults if missing."""
+    config_path = STATE_DIR / "delivery.json"
+    defaults = {
+        "routes": {
+            "job_match": "telegram",
+            "brief": "telegram",
+            "weekly_report": "email",
+            "alert": "telegram",
+        },
+        "telegram": {"chat_id": TELEGRAM_CHAT_ID},
+        "email": {"to": ""},
+    }
+    try:
+        with config_path.open() as f:
+            user = json.loads(f.read())
+        # Merge user config into defaults so missing keys get defaults
+        for section in ("routes", "telegram", "email"):
+            if section in user:
+                defaults[section].update(user[section])
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+    return defaults
+
+
+def deliver(message_type: str, content: str, *,
+            file_bytes: bytes | None = None,
+            file_name: str | None = None,
+            ref: str | None = None) -> str | None:
+    """Deliver a message through the configured channel.
+
+    Returns the platform message ID on success, None on failure.
+    Writes ref-map if ref is provided and delivery succeeds.
+    """
+    cfg = load_delivery_config()
+    route = cfg["routes"].get(message_type)
+    if not route:
+        logging.warning("deliver: unknown message_type %s", message_type)
+        return None
+
+    msg_id = None
+    try:
+        if route == "telegram":
+            chat_id = cfg["telegram"]["chat_id"]
+            if file_bytes and file_name:
+                # File document delivery
+                msg_id = _deliver_telegram_document(
+                    chat_id, file_bytes, file_name, content)
+            else:
+                # Text-only delivery
+                bot_token = _get_bot_token()
+                msg_id = send_telegram(bot_token, content)
+        elif route == "email":
+            token = ensure_valid_token(load_env())
+            to = cfg["email"]["to"]
+            if not to:
+                to = load_env().get("OUTLOOK_EMAIL", "")
+            if to:
+                send_email(token, to, "Weekly Job Market Trend Report", content)
+                # send_email doesn't return a message ID
+                msg_id = None
+    except Exception as e:
+        logging.error("deliver (%s) failed: %s", message_type, e)
+        return None
+
+    if ref and msg_id:
+        ref_map = STATE_DIR / "ref-map.jsonl"
+        ref_map.parent.mkdir(parents=True, exist_ok=True)
+        with ref_map.open("a") as f:
+            f.write(json.dumps({"tg_msg_id": msg_id, "ref": ref}) + "\n")
+
+    return msg_id
+
+
+def _get_bot_token() -> str:
+    return load_env().get("TELEGRAM_BOT_TOKEN", "")
+
+
+def _deliver_telegram_document(chat_id: str, file_bytes: bytes,
+                               file_name: str, caption: str) -> str | None:
+    """Upload a file to Telegram. Returns message_id or None.
+
+    Constructs multipart/form-data manually (same approach as bot-commands.py).
+    """
+    import email.mime.multipart
+    import email.mime.nonmultipart
+    from datetime import datetime, timezone
+
+    token = _get_bot_token()
+    boundary = "----FormBoundary" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    body = f"--{boundary}\r\n"
+    body += 'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+    body += f"{chat_id}\r\n"
+    body += f"--{boundary}\r\n"
+    body += 'Content-Disposition: form-data; name="caption"\r\n\r\n'
+    body += f"{caption}\r\n"
+    body += f"--{boundary}\r\n"
+    body += f'Content-Disposition: form-data; name="document"; filename="{file_name}"\r\n'
+    body += "Content-Type: application/octet-stream\r\n\r\n"
+
+    body_bytes = body.encode("utf-8")
+    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+    data = body_bytes + file_bytes + tail
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read())
+    if not result.get("ok"):
+        raise RuntimeError(f"sendDocument error: {result}")
+    return str(result["result"]["message_id"])
+
+
 def write_audit(record: dict, audit_file: Path) -> None:
     """Append one complete audit record for a processed message."""
     audit_file.parent.mkdir(parents=True, exist_ok=True)
