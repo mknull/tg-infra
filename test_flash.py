@@ -21,7 +21,7 @@ class TestFlashIncremental(unittest.TestCase):
         """Flash sees 3 lines and returns disqualified."""
         mock_raw = '{"decision": "disqualified", "reason": "not a job posting"}'
         with patch.object(triage, "call_deepseek", return_value=mock_raw):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "line1\nline2\nline3\nline4",
                 "ML roles", "data science",
                 "fake-key"
@@ -36,7 +36,7 @@ class TestFlashIncremental(unittest.TestCase):
             '{"decision": "pass_to_pro", "reason": "looks like a relevant job"}',
         ]
         with patch.object(triage, "call_deepseek", side_effect=responses):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "line1\nline2\nline3\nline4\nline5\nline6",
                 "ML roles", "data science",
                 "fake-key"
@@ -51,7 +51,7 @@ class TestFlashIncremental(unittest.TestCase):
             '{"decision": "disqualified", "reason": "seeking work, not hiring"}',
         ]
         with patch.object(triage, "call_deepseek", side_effect=responses):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "line1\nline2\nline3\nline4\nline5\nline6",
                 "ML roles", "data science",
                 "fake-key"
@@ -63,7 +63,7 @@ class TestFlashIncremental(unittest.TestCase):
         """Reaches end of content while still reading more — escalates to pro."""
         with patch.object(triage, "call_deepseek",
                           return_value='{"decision": "read_more", "reason": "still unclear"}'):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "short\npost\n",
                 "ML roles", "data science",
                 "fake-key"
@@ -72,14 +72,14 @@ class TestFlashIncremental(unittest.TestCase):
 
     def test_empty_content(self):
         """Empty content immediately disqualified."""
-        flag, reason = triage.flash_incremental(
+        flag, reason, _windows = triage.flash_incremental(
             "", "ML roles", "data science", "fake-key")
         self.assertFalse(flag)
         self.assertIn("empty", reason)
 
     def test_whitespace_only_content(self):
         """Whitespace-only lines count as empty."""
-        flag, reason = triage.flash_incremental(
+        flag, reason, _windows = triage.flash_incremental(
             "   \n\n  \n", "ML roles", "data science", "fake-key")
         self.assertFalse(flag)
         self.assertIn("empty", reason)
@@ -96,7 +96,7 @@ class TestFlashIncremental(unittest.TestCase):
         """Single line of content is processed as one window."""
         with patch.object(triage, "call_deepseek",
                           return_value='{"decision": "pass_to_pro", "reason": "good job"}'):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "Senior ML Engineer at TechCorp",
                 "ML roles", "data science",
                 "fake-key"
@@ -107,13 +107,33 @@ class TestFlashIncremental(unittest.TestCase):
         """API error → skip (conservative, don't pass bad data to Pro)."""
         with patch.object(triage, "call_deepseek",
                           side_effect=Exception("API timeout")):
-            flag, reason = triage.flash_incremental(
+            flag, reason, _windows = triage.flash_incremental(
                 "line1\nline2\nline3\nline4",
                 "ML roles", "data science",
                 "fake-key"
             )
         self.assertFalse(flag)
         self.assertIn("api timeout", reason.lower())
+
+    def test_windows_recorded_in_history(self):
+        """Each window decision is recorded in the returned list."""
+        responses = [
+            '{"decision": "read_more", "reason": "need more"}',
+            '{"decision": "pass_to_pro", "reason": "looks relevant"}',
+        ]
+        with patch.object(triage, "call_deepseek", side_effect=responses):
+            flag, reason, windows = triage.flash_incremental(
+                "line1\nline2\nline3\nline4\nline5\nline6",
+                "ML", "data",
+                "fake-key"
+            )
+        self.assertTrue(flag)
+        self.assertEqual(len(windows), 2)
+        self.assertEqual(windows[0]["decision"], "read_more")
+        self.assertEqual(windows[0]["window_start"], 1)
+        self.assertEqual(windows[0]["window_end"], 3)
+        self.assertEqual(windows[1]["decision"], "pass_to_pro")
+        self.assertEqual(windows[1]["window_start"], 4)
 
 
 if __name__ == "__main__":

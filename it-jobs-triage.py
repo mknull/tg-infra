@@ -50,17 +50,18 @@ FLASH_PROMPT = (
 
 
 def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
-                      api_key: str) -> tuple[bool, str]:
-    """Read 3 lines at a time until Flash decides. Returns (flag, reason)."""
+                      api_key: str) -> tuple[bool, str, list[dict]]:
+    """Read 3 lines at a time until Flash decides. Returns (flag, reason, windows)."""
     lines = [l for l in content.splitlines() if l.strip()]
     if not lines:
-        return False, "empty message"
+        return False, "empty message", []
 
+    windows: list[dict] = []
     i = 0
-    final_reason = ""
-    while i < len(lines):
-        window = lines[i:i + 3]
-        seen = "\n".join(lines[:i + len(window)])
+    total = len(lines)
+    while i < total:
+        window_end = min(i + 3, total)
+        seen = "\n".join(lines[:window_end])
         direction = _load_direction_small()
         prompt = FLASH_PROMPT.format(
             desired_roles=desired_roles,
@@ -75,24 +76,37 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
             result = extract_json(raw)
             decision = result.get("decision", "disqualified")
             reason = result.get("reason", "")
-            final_reason = reason
+
+            windows.append({
+                "window_start": i + 1,
+                "window_end": window_end,
+                "total_lines": total,
+                "decision": decision,
+                "reason": reason,
+            })
 
             logging.info("flash window %d-%d/%d → %s | %s",
-                         i + 1, min(i + 3, len(lines)), len(lines), decision, reason)
+                         i + 1, window_end, total, decision, reason)
 
             if decision == "disqualified":
-                return False, reason
+                return False, reason, windows
             if decision == "pass_to_pro":
-                return True, reason
-            # "read_more" — advance by 3 lines
+                return True, reason, windows
             i += 3
 
         except Exception as e:
             logging.error("flash window %d error: %s", i + 1, e)
-            return False, str(e)
+            windows.append({
+                "window_start": i + 1,
+                "window_end": window_end,
+                "total_lines": total,
+                "decision": "error",
+                "reason": str(e),
+            })
+            return False, str(e), windows
 
     # Exhausted content while reading more — escalate (conservative)
-    return True, final_reason
+    return True, windows[-1]["reason"] if windows else "", windows
 
 
 def _load_direction_small() -> str:
@@ -198,13 +212,15 @@ def main() -> None:
 
         desired_roles = ch_config.get("desired_roles", "")
         acceptable_roles = ch_config.get("acceptable_roles", "")
-        flag, flash_reason = flash_incremental(content, desired_roles, acceptable_roles, api_key)
+        flag, flash_reason, flash_windows = flash_incremental(
+            content, desired_roles, acceptable_roles, api_key)
 
         record["flash"] = {
             "model": FLASH_MODEL,
             "decision": "flag" if flag else "skip",
             "reason": flash_reason,
             "at": flash_at,
+            "windows": flash_windows,
         }
 
         # --- Pro ---

@@ -216,16 +216,16 @@ def deliver(message_type: str, content: str, *,
         logging.warning("deliver: unknown message_type %s", message_type)
         return None
 
+    DELIVERY_AUDIT = STATE_DIR / "audit" / "delivery.jsonl"
     msg_id = None
+    error = None
     try:
         if route == "telegram":
             chat_id = cfg["telegram"]["chat_id"]
             if file_bytes and file_name:
-                # File document delivery
                 msg_id = _deliver_telegram_document(
                     chat_id, file_bytes, file_name, content)
             else:
-                # Text-only delivery
                 bot_token = _get_bot_token()
                 msg_id = send_telegram(bot_token, content)
         elif route == "email":
@@ -235,13 +235,27 @@ def deliver(message_type: str, content: str, *,
                 to = load_env().get("OUTLOOK_EMAIL", "")
             if to:
                 send_email(token, to, "Weekly Job Market Trend Report", content)
-                # send_email doesn't return a message ID
-                msg_id = None
+                msg_id = f"email:{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
+            else:
+                error = "no recipient configured"
     except Exception as e:
         logging.error("deliver (%s) failed: %s", message_type, e)
+        error = str(e)
+
+    # Always write a delivery audit record
+    write_audit({
+        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "message_type": message_type,
+        "channel": route,
+        "success": error is None,
+        "error": error,
+        "platform_id": msg_id,
+    }, DELIVERY_AUDIT)
+
+    if error:
         return None
 
-    if ref and msg_id:
+    if ref and msg_id and route == "telegram":
         ref_map = STATE_DIR / "ref-map.jsonl"
         ref_map.parent.mkdir(parents=True, exist_ok=True)
         with ref_map.open("a") as f:

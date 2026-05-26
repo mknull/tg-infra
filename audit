@@ -128,8 +128,21 @@ def print_record(r, feedback=None, show_content=False, verbose=False):
         reason = decision.get("reason", "")
         dec_at = decision.get("at", "")
         model = decision.get("model", "")
+        windows = decision.get("windows", [])
+
         line_info = ""
-        if "line" in decision:
+        if windows:
+            # New format: show window summary
+            wins = len(windows)
+            last_w = windows[-1]
+            line_info = f" {wins} windows ("
+            parts = []
+            for w in windows:
+                parts.append(f"{color_decision(w['decision'])}")
+            line_info += "→".join(parts)
+            line_info += f", lines 1-{last_w['window_end']}/{last_w['total_lines']})"
+        elif "line" in decision:
+            # Legacy format
             line_info = f" line {decision['line']}/{decision.get('of','?')}"
         meta_parts = []
         if model:
@@ -322,7 +335,8 @@ def build_cascades(records, since_days=None):
         preview = recs[0].get("preview", "?")
         arrived_at = recs[0].get("arrived_at", "?")
 
-        # Collect all distinct flash decisions (for cyithr: line-by-line)
+        # Collect flash window decisions from the windows list (new format)
+        # or from the legacy line/of fields (old format)
         flash_decs = []
         pro_dec = None
         pro_msg = None
@@ -332,20 +346,29 @@ def build_cascades(records, since_days=None):
                 f = r["flash"]
                 key = f.get("at", "")
                 if key:
-                    # Use the flash-at key only. Pro runs in the same
-                    # triage execution, so its timestamp shouldn't create
-                    # a separate eval batch.  Flash and Pro can land in
-                    # different minutes (e.g. :45 and :46) — that's one
-                    # evaluation, not two.
                     eval_batches.add(key[:16])
-                flash_decs.append({
-                    "decision": f.get("decision", "?"),
-                    "line": f.get("line"),
-                    "of": f.get("of"),
-                    "reason": f.get("reason", ""),
-                    "model": f.get("model", ""),
-                    "at": f.get("at", ""),
-                })
+                windows = f.get("windows", [])
+                if windows:
+                    # New format: flash_incremental windows list
+                    for w in windows:
+                        flash_decs.append({
+                            "decision": w.get("decision", "?"),
+                            "line": w.get("window_start"),
+                            "of": w.get("total_lines"),
+                            "reason": w.get("reason", ""),
+                            "model": f.get("model", ""),
+                            "at": f.get("at", ""),
+                        })
+                else:
+                    # Legacy format: single flash decision
+                    flash_decs.append({
+                        "decision": f.get("decision", "?"),
+                        "line": f.get("line"),
+                        "of": f.get("of"),
+                        "reason": f.get("reason", ""),
+                        "model": f.get("model", ""),
+                        "at": f.get("at", ""),
+                    })
             if "pro" in r:
                 p = r["pro"]
                 pro_dec = {
@@ -562,10 +585,56 @@ def main():
         exit_code = 0
         days = args.days if ('--days' in sys.argv or '-d' in sys.argv) else 1
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        # --- direction health (source-independent) ---
+        direction_file = os.path.join(STATE, "current-direction.md")
+        small_file = os.path.join(STATE, "current-direction-small.md")
+        dir_exists = os.path.exists(direction_file)
+        small_exists = os.path.exists(small_file)
+        if dir_exists != small_exists:
+            print(f"{RED}DIRECTION MISMATCH{RESET}: one direction file exists "
+                  f"without the other (full={dir_exists}, small={small_exists})")
+            exit_code = 1
+        if dir_exists and small_exists:
+            dir_mtime = os.path.getmtime(direction_file)
+            small_mtime = os.path.getmtime(small_file)
+            dir_size = os.path.getsize(direction_file)
+            small_size = os.path.getsize(small_file)
+            if small_mtime < dir_mtime:
+                print(f"{YELLOW}DIRECTION STALE COMPRESSION{RESET}: "
+                      f"direction updated but small not recompressed")
+                exit_code = 1
+            if dir_size > 3000:
+                print(f"{YELLOW}DIRECTION SIZE{RESET}: full direction {dir_size}B "
+                      f"— may be accumulating stale preferences")
+                exit_code = 1
+            if small_size > 600:
+                print(f"{YELLOW}DIRECTION COMPRESSION SIZE{RESET}: "
+                      f"small direction {small_size}B — should be 1-2 sentences")
+                exit_code = 1
+            if small_mtime >= dir_mtime and dir_size <= 3000 and small_size <= 600:
+                print(f"{GREEN}direction: clean{RESET}")
+        else:
+            print(f"{DIM}direction: no files{RESET}")
+
+        # --- prompt size health ---
+        for label, path in [("it-jobs-criteria", "it-jobs-criteria.md"),
+                             ("email-triage-criteria", "email-triage-criteria.md")]:
+            cpath = os.path.join(STATE, path)
+            if os.path.exists(cpath):
+                csize = os.path.getsize(cpath)
+                if csize > 10000:
+                    print(f"{RED}PROMPT SIZE{RESET}: {label} {csize}B "
+                          f"— approaching context limit, prune rules")
+                    exit_code = 1
+                elif csize > 6000:
+                    print(f"{YELLOW}PROMPT SIZE{RESET}: {label} {csize}B")
+                else:
+                    print(f"{GREEN}{label}: {csize}B{RESET}")
+
+        # --- per-source cascade health ---
         for src in SOURCES:
             records = load_records(src, since=since)
-
-            # Agent (briefme) records — different health checks
             if src == "briefme":
                 total = len(records)
                 if total == 0:
@@ -616,6 +685,58 @@ def main():
                     print(f"{GREEN}{src}: clean{RESET}")
             else:
                 print(f"{DIM}{src}: no data in window{RESET}")
+        # --- delivery audit health ---
+        delivery_file = os.path.join(AUDIT_DIR, "delivery.jsonl")
+        if os.path.exists(delivery_file):
+            delivery_records = []
+            with open(delivery_file) as f:
+                for line in f:
+                    if line.strip():
+                        r = json.loads(line)
+                        if r.get("at", "") >= since:
+                            delivery_records.append(r)
+            if delivery_records:
+                failures = [r for r in delivery_records if not r.get("success")]
+                total_d = len(delivery_records)
+                if failures:
+                    channels = set(r.get("channel", "?") for r in failures)
+                    print(f"{RED}DELIVERY FAILURES{RESET}: {len(failures)}/{total_d} "
+                          f"failed ({', '.join(channels)})")
+                    exit_code = 1
+                else:
+                    print(f"{GREEN}delivery: clean{RESET} "
+                          f"({total_d} deliveries, {len(set(r['channel'] for r in delivery_records))} channels)")
+            else:
+                print(f"{DIM}delivery: no data in window{RESET}")
+        else:
+            print(f"{DIM}delivery: no file{RESET}")
+
+        # --- weekly report health ---
+        weekly_file = os.path.join(AUDIT_DIR, "weekly.jsonl")
+        if os.path.exists(weekly_file):
+            weekly_records = []
+            with open(weekly_file) as f:
+                for line in f:
+                    if line.strip():
+                        r = json.loads(line)
+                        if r.get("report_at", "") >= since:
+                            weekly_records.append(r)
+            if weekly_records:
+                failures = [r for r in weekly_records if not r.get("success")]
+                if failures:
+                    print(f"{RED}WEEKLY FAILURES{RESET}: {len(failures)} reports failed")
+                    exit_code = 1
+                else:
+                    latest = weekly_records[-1]
+                    print(f"{GREEN}weekly: clean{RESET} "
+                          f"(last report {latest.get('report_at','?')[:10]}, "
+                          f"{latest.get('tagged_count',0)} tagged, "
+                          f"{latest.get('send_count',0)} sends)")
+            else:
+                print(f"{DIM}weekly: no data in window{RESET}")
+        else:
+            print(f"{DIM}weekly: no file{RESET}")
+
         sys.exit(exit_code)
 
     if args.topology:
