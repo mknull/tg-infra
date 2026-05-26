@@ -4,30 +4,40 @@ A self-contained job-market intelligence pipeline. Monitors Telegram groups, Out
 
 ## Architecture
 
+```mermaid
+flowchart TB
+  subgraph Runner["systemd timers"]
+    direction LR
+    T1[every 30min]
+    T2[every 2hr]
+    T3[every 7min]
+  end
+
+  subgraph Input
+    Poller[it-jobs-poller<br/>Telegram → queue]
+    Email[email-triage<br/>Graph API fetch]
+  end
+
+  subgraph Decision["Two-stage triage"]
+    Flash[DeepSeek Flash<br/>first pass]
+    Pro[DeepSeek Pro<br/>full evaluation]
+  end
+
+  subgraph Action["User"]
+    Chat[Telegram chat<br/>read match]
+  end
+
+  subgraph Brief["/briefme"]
+    Agent[function-calling agent<br/>research → evaluate → PDF]
+  end
+
+  Runner --> Input
+  Poller --> Flash
+  Email --> Flash
+  Flash -->|maybe| Pro
+  Pro -->|forward| Chat
+  Chat -->|quote + /briefme| Agent
 ```
-                  ┌──────────────────┐
-                  │  it-jobs-poller  │  Telethon user-API
-                  │  jobspy-poller   │  (planned)
-                  └────────┬─────────┘
-                           │ queue files
-                  ┌────────▼─────────┐
-                  │  it-jobs-triage  │  Flash → Pro → Telegram
-                  └──────────────────┘
-
-  ┌────────────────────┐
-  │   email-triage     │  Graph API → Flash → Pro → Telegram
-  └────────────────────┘
-
-  ┌────────────────────┐
-  │   bot-commands     │  /briefme agent ← DeepSeek function-calling
-  └────────────────────┘
-
-  ┌────────────────────┐
-  │      audit         │  Health checks, cascade topology, deviation detection
-  └────────────────────┘
-```
-
-Four systemd timers (bot-commands every 7 min, triage and poll every 30 min, email every 2 hours) run everything on a staggered cadence. The audit health check runs after the longest cycle and pings Telegram if anything broke.
 
 ## Pipeline detail
 
