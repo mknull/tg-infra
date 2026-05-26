@@ -6,13 +6,6 @@ A self-contained job-market intelligence pipeline. Monitors Telegram groups, Out
 
 ```mermaid
 flowchart TB
-  subgraph Runner["systemd timers"]
-    direction LR
-    T1[every 30min]
-    T2[every 2hr]
-    T3[every 7min]
-  end
-
   subgraph Input
     Poller[it-jobs-poller<br/>Telegram → queue]
     Email[email-triage<br/>Graph API fetch]
@@ -31,7 +24,6 @@ flowchart TB
     Agent[function-calling agent<br/>research → evaluate → PDF]
   end
 
-  Runner --> Input
   Poller --> Flash
   Email --> Flash
   Flash -->|maybe| Pro
