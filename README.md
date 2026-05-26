@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mknull/tg-infra/actions/workflows/ci.yml/badge.svg)](https://github.com/mknull/tg-infra/actions/workflows/ci.yml)
 
-A self-contained job-market intelligence pipeline. Monitors Telegram groups, Outlook inboxes, and recruitment sites — runs a two-stage DeepSeek triage to filter vacancies for relevance — delivers decision-grade briefs to a private Telegram chat. Built to run unattended under systemd with no third-party services.
+A self-contained job-market intelligence pipeline. Monitors Telegram groups and Outlook inboxes, runs a two-stage DeepSeek triage to filter vacancies for relevance, delivers matches to a private Telegram chat, and adapts to user feedback over time. Built to run unattended under systemd.
 
 ## Architecture
 
@@ -14,38 +14,55 @@ flowchart TB
   end
 
   subgraph Decision["Two-stage triage"]
-    Flash[DeepSeek Flash<br/>first pass]
-    Pro[DeepSeek Pro<br/>full evaluation]
+    Flash[DeepSeek Flash<br/>3-line incremental filter]
+    Pro[DeepSeek Pro<br/>full evaluation + structured tags]
   end
 
-  subgraph Action["User"]
-    Chat[Telegram chat<br/>read match]
+  subgraph Output
+    Chat["Telegram chat<br/>matched jobs"]
+    Brief["briefme agent<br/>research → PDF"]
+    Weekly["Weekly trend report<br/>market trends + smell audit"]
   end
 
-  subgraph Brief["/briefme"]
-    Agent[function-calling agent<br/>research → evaluate → PDF]
+  subgraph Adaptation["Feedback loop"]
+    Direction["direction files<br/>full + delta"]
   end
+
+  Audit["audit trail<br/>state/audit/"]
 
   Poller --> Flash
   Email --> Flash
-  Flash -->|maybe| Pro
-  Pro -->|forward| Chat
-  Chat -->|quote + /briefme| Agent
+  Flash -->|pass_to_pro| Pro
+  Pro -->|"forward"| Chat
+  Pro --> Audit
+  Chat -->|" /briefme "| Brief
+  Audit -->|"weekly aggregation"| Weekly
+  Weekly -->|"email reply or /direction"| Direction
+  Direction -.->|"delta"| Flash
+  Direction -.->|"full context"| Pro
 ```
 
 ## Pipeline detail
 
-### Two-stage triage (email and Telegram)
+### Two-stage triage
 
-Every message passes through a **Flash** model (deepseek-v4-flash, fast and cheap) that filters obvious mismatches — wrong domain, CV posted instead of a vacancy, non-technical roles. Messages that pass Flash get full body evaluation from a **Pro** model (deepseek-v4-pro) against Filippos Panagiotou's profile criteria. Matches are forwarded to Telegram with a structured summary.
+Every message passes through Flash (`deepseek-v4-flash`) which reads 3 lines at a time and decides: `disqualified`, `read_more`, or `pass_to_pro`. Only messages Flash can't disqualify reach Pro (`deepseek-v4-pro`) for full body evaluation against the candidate's criteria. Most volume dies at Flash.
 
-The cursor-based dedup (`receivedDateTime gt {cursor + 1s}`) prevents the Graph API's sub-second timestamp precision from creating infinite re-processing loops — a bug the audit tool caught and the pipeline self-heals from.
+Pro extracts structured tags (role title, skills, domain, seniority, remote status) alongside the send/skip decision — the model already has the full text in context, so this costs nothing extra.
+
+### Per-channel config, not per-channel code
+
+Channel descriptions live in `state/channels.json` — each entry specifies what the channel is about, how messages are formatted, and what roles the user wants vs. will accept. The flash prompt is a fixed template; channel-specific values are interpolated at runtime. No channel-specific code paths.
 
 ### `/briefme` agent
 
-A DeepSeek function-calling agent that replaces the old single-pass prompt. When the user quotes a job posting and replies `/briefme`, the agent loads his profile files, searches for the company, fetches the listing, and produces a decision-grade brief covering the role, environment, and career-strategic fit. Output is converted to PDF and sent as a Telegram document.
+A DeepSeek function-calling agent. The user quotes a job and replies `/briefme` — the agent loads profile files, searches for the company, fetches the listing, and produces a decision-grade brief covering the role, environment, and career-strategic fit. Output is converted to PDF and sent as a Telegram document.
 
-The agent operates with guardrailed tools: a two-stage URL validator (static blocklist → Flash classifier for unknown domains), filesystem sandbox (writes restricted to `workspace/briefs/`, reads to the project root), search query injection detection, and a per-brief rate limiter. 49 tests simulate adversarial tool calls trying to break each guardrail.
+Tools are guardrailed: two-stage URL validation (static blocklist → Flash classifier for unknowns), filesystem sandbox (`.resolve()` on every path), query injection detection, content sanitisation, and a per-brief rate limiter. 27 adversarial tests verify each layer fails closed.
+
+### Adaptive direction
+
+The user's profile is generated once from documents, but preferences drift. A `CurrentDirection` file captures deltas ("exploring comp bio," "skip data engineering roles"). The weekly report prompts for corrections. When the user replies or sends `/direction` to the bot, the direction file updates, and both Flash and Pro see the delta in their prompts. Behavior changes without manual prompt editing.
 
 ### Audit discipline
 
@@ -54,39 +71,48 @@ Every decision across every pipeline is recorded to `state/audit/`. The `./audit
 - **Default view** — recent records with inline duplicate warnings
 - **`--summary`** — per-source stats (records vs unique, decision distributions)
 - **`--topology`** — expected vs actual cascade paths with deviation detection
-- **`--health`** — machine-readable check that exits 1 on duplicate evals, broken cascades, agent failures, or tool errors (designed to run after every email-ingest cycle)
+- **`--health`** — machine-readable check that exits 1 on duplicate evals, broken cascades, agent failures, or tool errors
 
-The audit found the cursor precision bug, the false-positive minute-granularity issue, and the broken cascade from the pre-fix duplicate runs — each fixed before the user noticed them in production.
+The audit found the cursor precision bug, the false-positive minute-granularity issue, and the broken cascade from the pre-fix duplicate runs — each before the user noticed them in production.
 
-### Guardrails
+### Web search isolation
 
-All agent tool access is gated through `guardrails.py`: fetch URL validation (scheme blocks, internal IP blocks, trusted domain fast-path, Flash classifier for unknowns), search query injection detection, filesystem sandbox (`.resolve()` on every path), content sanitisation (wraps fetched text in isolation tags), and a per-brief rate limiter. 27 adversarial tests verify each layer fails closed.
+The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/searxng/searxng) instance in Docker, bound to `127.0.0.1`. No third-party search API, no API keys, no rate limits. The agent's filesystem sandbox can't reach it directly — only the `web_search` tool function can.
 
 ## Project structure
 
 ```
-├── lib.py                  Shared utilities (env, DeepSeek, Telegram, audit)
+├── lib.py                  Shared utilities (env, DeepSeek, Telegram, Outlook, audit)
 ├── guardrails.py           Agent tool access control
 ├── tools.py                Agent tools (read_file, web_search, web_fetch, md_to_pdf)
 ├── agent.py                DeepSeek function-calling loop + system prompt
 ├── audit                   CLI audit tool
 │
-├── email-triage.py         Outlook → Flash → Pro → Telegram
+├── it-jobs-poller.py       Telethon poller (Telegram groups → queue)
+├── it-jobs-triage.py       Queue → incremental Flash → Pro → delivery
+├── email-triage.py         Outlook Graph API → Flash → Pro → delivery
 ├── email-ingest-wrap       Email ingest + audit health check + Telegram alert
 │
-├── it-jobs-poller.py       Telethon poller (Telegram groups → queue)
-├── it-jobs-triage.py       Queue → Flash → Pro → Telegram
+├── bot-commands.py         Telegram bot (/briefme, /direction, /start, /status)
+├── weekly-trend.py         Weekly market report + smell investigation
+├── outlook-auth.py         One-time Outlook OAuth device-code flow
+├── feedback-poller.py      Polls Outlook for replies to weekly reports
+├── generate-profile.py     Two-stage profile generation from user documents
 │
-├── bot-commands.py         Telegram bot command handler (/briefme, /start, /status)
+├── state/                  Runtime state (cursors, audit, queue, config, tokens)
+├── state/channels.json     Per-channel descriptions, desired/acceptable roles
 │
-├── skills/job-brief/       /briefme skill doc + references
-├── source/                 Filippos's profile (interests, skills, tech_stack)
-├── state/                  Runtime state (cursors, audit, queue, logs, tokens)
-│
-├── test_guardrails.py      27 adversarial tests
+├── test_guardrails.py      27 adversarial guardrail tests
 ├── test_tools.py           14 tool tests
 ├── test_agent.py           8 agent loop tests
+├── test_deliver.py         11 delivery routing tests
+├── test_flash.py           9 flash strategy tests
+├── test_direction.py       9 CurrentDirection tests
+├── test_weekly.py          7 smell investigation tests
+├── test_feedback.py        4 feedback processing tests
+├── test_integration.py     14 end-to-end prompt assembly tests
 │
+├── .github/workflows/ci.yml  CI: run 103 tests + audit health check
 └── requirements.txt        telethon, markdown, weasyprint, playwright
 ```
 
@@ -94,8 +120,9 @@ All agent tool access is gated through `guardrails.py`: fetch URL validation (sc
 
 - Python ≥ 3.10, a single venv, four pip packages
 - DeepSeek API (flash + pro models)
-- Microsoft Graph API (Outlook email)
+- Microsoft Graph API (Outlook email — optional)
 - Telethon (Telegram MTProto user-API)
+- SearXNG (self-hosted metasearch, Docker)
 - systemd (user timers, no root)
 
-No LangChain. No hosted scrapers. No third-party APIs beyond the three the pipeline targets.
+No LangChain. No hosted scrapers. No proprietary search APIs.
