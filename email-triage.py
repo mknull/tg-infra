@@ -13,7 +13,9 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 load_env, call_deepseek, extract_json, send_telegram, write_audit)
+                 GRAPH_BASE, TOKEN_ENDPOINT,
+                 load_env, load_token, save_token, ensure_valid_token,
+                 call_deepseek, extract_json, send_telegram, write_audit)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,70 +28,6 @@ CURSOR_FILE = STATE_DIR / "email-cursor"
 REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
 CRITERIA_FILE = STATE_DIR / "email-triage-criteria.md"
-TOKEN_FILE = STATE_DIR / "outlook-token.json"
-
-GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-TOKEN_ENDPOINT = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
-TOKEN_REFRESH_BUFFER_S = 300  # refresh 5 min before expiry
-
-
-# ---------------------------------------------------------------------------
-# env / token
-# ---------------------------------------------------------------------------
-
-def load_token() -> dict:
-    return json.loads(TOKEN_FILE.read_text())
-
-
-def save_token(token: dict) -> None:
-    """Atomic write so a crash never leaves a partial token file."""
-    tmp = TOKEN_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(token))
-    tmp.chmod(0o600)
-    os.replace(tmp, TOKEN_FILE)
-
-
-def ensure_valid_token(env: dict) -> str:
-    """Return a valid access token, refreshing if within BUFFER seconds of expiry."""
-    token = load_token()
-    expires_at_s = token["expires_at"] / 1000  # stored in ms
-    if time.time() < expires_at_s - TOKEN_REFRESH_BUFFER_S:
-        return token["access_token"]
-
-    logging.info("Token expiring soon — refreshing.")
-    client_id = env.get("OUTLOOK_CLIENT_ID", "")
-    if not client_id:
-        raise RuntimeError("OUTLOOK_CLIENT_ID not set in .env")
-
-    body = urllib.parse.urlencode({
-        "grant_type": "refresh_token",
-        "client_id": client_id,
-        "refresh_token": token["refresh_token"],
-        "scope": "offline_access https://graph.microsoft.com/Mail.Read",
-    }).encode()
-    req = urllib.request.Request(
-        TOKEN_ENDPOINT,
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-
-    if "error" in data:
-        raise RuntimeError(f"Token refresh failed: {data}")
-
-    new_token = {
-        "access_token": data["access_token"],
-        # Microsoft may or may not rotate the refresh token; keep the new one if present
-        "refresh_token": data.get("refresh_token", token["refresh_token"]),
-        "expires_at": int((time.time() + data["expires_in"]) * 1000),
-    }
-    save_token(new_token)
-    print("  Token refreshed.")
-    return new_token["access_token"]
-
-
 # ---------------------------------------------------------------------------
 # Graph API
 # ---------------------------------------------------------------------------
@@ -188,8 +126,8 @@ def flash_header_triage(from_addr: str, subject: str, api_key: str) -> tuple[str
 
 def pro_body_triage(
     from_addr: str, subject: str, body: str, api_key: str
-) -> tuple[str, str, str]:
-    """Return (decision, reason, message). decision is 'send' or 'skip'."""
+) -> tuple[str, str, str, dict]:
+    """Return (decision, reason, message, tags). decision is 'send' or 'skip'."""
     criteria = CRITERIA_FILE.read_text()
     prompt = (
         "You are evaluating an email against a candidate profile.\n\n"
@@ -197,14 +135,25 @@ def pro_body_triage(
         f"FROM: {from_addr}\nSUBJECT: {subject}\n\nBODY:\n{body[:8000]}\n\n"
         "Output ONLY a JSON object:\n"
         '{"decision": "send" or "skip", "reason": "one sentence", '
-        '"message": "3-5 sentence Telegram message (only if send, else empty string)"}\n\n'
+        '"message": "3-5 sentence Telegram message (only if send, else empty string)", '
+        '"tags": {'
+        '"role_title": "string (e.g. Senior ML Engineer)", '
+        '"role_type": "research|engineering|research_engineering|data_science|conference|internship|other", '
+        '"seniority": "junior|mid|senior|lead|principal|unknown", '
+        '"skills": ["list of required skills mentioned, lowercase"], '
+        '"tech_stack": ["list of tools/frameworks/languages, lowercase"], '
+        '"domain": "string (e.g. computer_vision, nlp, probabilistic_ml, robotics, general_ml)", '
+        '"location": "string or remote or unknown", '
+        '"remote": true or false, '
+        '"salary_range": "string or empty string"}}\n\n'
         "Telegram message: what the role/event is, where, why it matches, link or contact if present."
     )
     result = extract_json(call_deepseek(PRO_MODEL, prompt, api_key))
     decision = result.get("decision", "skip")
     reason = result.get("reason", "")
     message = result.get("message", "")
-    return decision, reason, message
+    tags = result.get("tags", {})
+    return decision, reason, message, tags
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +239,7 @@ def main() -> None:
             pro_error = None
             for pro_attempt in range(3):
                 try:
-                    bd, br, bm = pro_body_triage(from_addr, subject, body_text, api_key)
+                    bd, br, bm, bt = pro_body_triage(from_addr, subject, body_text, api_key)
                     pro_error = None
                     break
                 except Exception as e:
@@ -304,13 +253,15 @@ def main() -> None:
                 logging.error("[email] pro error after 3 attempts: %s", pro_error)
                 record["pro"] = {"model": PRO_MODEL, "decision": "error",
                                  "reason": str(pro_error),
-                                 "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                                 "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                 "tags": {}}
                 write_audit(record, AUDIT_FILE)
                 # don't advance cursor — retry on next run
                 continue
 
             record["pro"] = {"model": PRO_MODEL, "decision": bd, "reason": br,
-                             "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+                             "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                             "tags": bt}
             logging.info("[email] pro → %s | %s", bd, br)
 
             if bd == "send" and bm and bot_token:

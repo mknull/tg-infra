@@ -113,8 +113,8 @@ def flash_line_by_line(content: str, message_id: str, channel: str, api_key: str
 # shared Pro evaluation
 # ---------------------------------------------------------------------------
 
-def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str]:
-    """Return (decision, reason, message). decision is 'send' or 'skip'."""
+def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str, dict]:
+    """Return (decision, reason, message, tags). decision is 'send' or 'skip'."""
     criteria = CRITERIA_FILE.read_text()
     prompt = (
         "You are evaluating a job posting against a candidate profile.\n\n"
@@ -122,7 +122,17 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str]:
         f"FULL POSTING:\n{content}\n\n"
         "Based on the Stage 2 criteria above, output ONLY a JSON object:\n"
         '{"decision": "send" or "skip", "reason": "one sentence", '
-        '"message": "3-5 sentence Telegram message (only if decision is send, else empty string)"}\n\n'
+        '"message": "3-5 sentence Telegram message (only if decision is send, else empty string)", '
+        '"tags": {'
+        '"role_title": "string (e.g. Senior ML Engineer)", '
+        '"role_type": "research|engineering|research_engineering|data_science|conference|internship|other", '
+        '"seniority": "junior|mid|senior|lead|principal|unknown", '
+        '"skills": ["list of required skills mentioned, lowercase"], '
+        '"tech_stack": ["list of tools/frameworks/languages, lowercase"], '
+        '"domain": "string (e.g. computer_vision, nlp, probabilistic_ml, robotics, general_ml)", '
+        '"location": "string or remote or unknown", '
+        '"remote": true or false, '
+        '"salary_range": "string or empty string"}}\n\n'
         "The Telegram message should cover: role + company, key tech stack, why it matches "
         "the profile, location/remote status, salary if stated, how to apply."
     )
@@ -132,9 +142,10 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str]:
         decision = result.get("decision", "skip")
         reason = result.get("reason", "")
         message = result.get("message", "")
-        return decision, reason, message
+        tags = result.get("tags", {})
+        return decision, reason, message, tags
     except Exception as e:
-        return "error", str(e), ""
+        return "error", str(e), "", {}
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +216,14 @@ def main() -> None:
 
         # --- Pro ---
         if flag:
-            pro_decision, pro_reason, pro_message = pro_full_eval(content, api_key)
+            pro_decision, pro_reason, pro_message, pro_tags = pro_full_eval(content, api_key)
             pro_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             record["pro"] = {
                 "model": PRO_MODEL,
                 "decision": pro_decision,
                 "reason": pro_reason,
                 "at": pro_at,
+                "tags": pro_tags,
             }
             logging.info("[%s/%s] pro → %s | %s", channel, message_id, pro_decision, pro_reason)
 
