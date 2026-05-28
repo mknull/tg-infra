@@ -70,8 +70,8 @@ class TestDeliverRouting(unittest.TestCase):
     def tearDown(self):
         self._config_path.unlink(missing_ok=True)
 
-    @patch("lib.write_audit")
-    @patch("lib.send_telegram")
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram")
     def test_routes_job_match_to_telegram(self, mock_send, mock_audit):
         mock_send.return_value = "msg_42"
         from lib import deliver
@@ -79,10 +79,10 @@ class TestDeliverRouting(unittest.TestCase):
         mock_send.assert_called_once()
         self.assertEqual(result, "msg_42")
 
-    @patch("lib.write_audit")
-    @patch("lib.send_email")
-    @patch("lib.ensure_valid_token", return_value="fake-token")
-    @patch("lib.load_env", return_value={"OUTLOOK_CLIENT_ID": "x", "OUTLOOK_EMAIL": "test@example.com"})
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_email")
+    @patch("lib.delivery.ensure_valid_token", return_value="fake-token")
+    @patch("lib.delivery.load_env", return_value={"OUTLOOK_CLIENT_ID": "x", "OUTLOOK_EMAIL": "test@example.com"})
     def test_routes_weekly_report_to_email(self, mock_env, mock_token, mock_send, mock_audit):
         from lib import deliver
         result = deliver("weekly_report", "Weekly trends...")
@@ -90,22 +90,22 @@ class TestDeliverRouting(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(result.startswith("email:"))
 
-    @patch("lib.send_telegram")
+    @patch("lib.delivery.send_telegram")
     def test_returns_none_on_unknown_message_type(self, mock_send):
         from lib import deliver
         result = deliver("unknown_type", "content")
         self.assertIsNone(result)
         mock_send.assert_not_called()
 
-    @patch("lib.write_audit")
-    @patch("lib.send_telegram", side_effect=Exception("API down"))
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram", side_effect=Exception("API down"))
     def test_returns_none_on_delivery_failure(self, mock_send, mock_audit):
         from lib import deliver
         result = deliver("job_match", "content")
         self.assertIsNone(result)
 
-    @patch("lib.write_audit")
-    @patch("lib.send_telegram", return_value="msg_42")
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram", return_value="msg_42")
     def test_writes_ref_map_on_telegram_success(self, mock_send, mock_audit):
         ref_map = STATE_DIR / "ref-map.jsonl"
         ref_map.unlink(missing_ok=True)
@@ -118,8 +118,8 @@ class TestDeliverRouting(unittest.TestCase):
         self.assertEqual(entries[0]["ref"], "test-ref-123")
         ref_map.unlink()
 
-    @patch("lib.write_audit")
-    @patch("lib.send_telegram", side_effect=Exception("fail"))
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram", side_effect=Exception("fail"))
     def test_no_ref_map_on_failure(self, mock_send, mock_audit):
         ref_map = STATE_DIR / "ref-map.jsonl"
         ref_map.unlink(missing_ok=True)

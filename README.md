@@ -82,7 +82,7 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ## Project structure
 
 ```
-├── lib.py                  Shared utilities (env, DeepSeek, Telegram, Outlook, audit)
+├── lib/                    Config, API, delivery, direction, auth, audit modules
 ├── guardrails.py           Agent tool access control
 ├── tools.py                Agent tools (read_file, web_search, web_fetch, md_to_pdf)
 ├── agent.py                DeepSeek function-calling loop + system prompt

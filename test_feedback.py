@@ -17,8 +17,8 @@ class TestDirectionCommand(unittest.TestCase):
         (_PROJECT / "state" / "audit" / "direction.jsonl").unlink(missing_ok=True)
         (_PROJECT / "state").mkdir(parents=True, exist_ok=True)
 
-    @patch("lib.compress_current_direction")
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
     def test_updates_full_direction_file(self, mock_pro, mock_compress):
         """'/direction explore comp bio' → file reflects the update."""
         mock_pro.return_value = "You are exploring computational biology roles."
@@ -29,8 +29,8 @@ class TestDirectionCommand(unittest.TestCase):
         self.assertTrue(DIRECTION_FILE.exists())
         self.assertIn("computational biology", DIRECTION_FILE.read_text())
 
-    @patch("lib.compress_current_direction")
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
     def test_writes_audit_record(self, mock_pro, mock_compress):
         """Update logged to direction.jsonl."""
         mock_pro.return_value = "Updated direction."
@@ -44,8 +44,8 @@ class TestDirectionCommand(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["feedback"], "new feedback")
 
-    @patch("lib.compress_current_direction")
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
     def test_no_existing_file_creates_first_direction(self, mock_pro, mock_compress):
         """No existing direction → create from feedback."""
         mock_pro.return_value = "First direction."

@@ -9,7 +9,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, PRO_MODEL, load_env, call_deepseek)
+from lib import (DEEPSEEK_API_URL, PRO_MODEL, load_env, call_deepseek,
+                 send_telegram_document)
 from agent import run_agent
 
 logging.basicConfig(
@@ -126,44 +127,6 @@ def send_message(token: str, chat_id: str, text: str, reply_to: str | None = Non
     telegram_call(token, "sendMessage", params)
 
 
-def send_document(token: str, chat_id: str, file_bytes: bytes, filename: str,
-                  caption: str, reply_to: str | None = None) -> None:
-    """Upload a file as a Telegram document with a caption."""
-    import email.mime.multipart
-    import email.mime.nonmultipart
-
-    boundary = "----FormBoundary" + datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
-    body = f"--{boundary}\r\n"
-    body += 'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
-    body += f"{chat_id}\r\n"
-    if reply_to:
-        body += f"--{boundary}\r\n"
-        body += 'Content-Disposition: form-data; name="reply_to_message_id"\r\n\r\n'
-        body += f"{reply_to}\r\n"
-    body += f"--{boundary}\r\n"
-    body += 'Content-Disposition: form-data; name="caption"\r\n\r\n'
-    body += f"{caption}\r\n"
-    body += f"--{boundary}\r\n"
-    body += f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'
-    body += "Content-Type: application/octet-stream\r\n\r\n"
-
-    body_bytes = body.encode("utf-8")
-    tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
-
-    data = body_bytes + file_bytes + tail
-
-    url = TELEGRAM_API.format(token=token, method="sendDocument")
-    req = urllib.request.Request(
-        url, data=data,
-        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        result = json.loads(resp.read())
-    if not result.get("ok"):
-        raise RuntimeError(f"sendDocument error: {result}")
-
-
 # ---------------------------------------------------------------------------
 # command handlers
 # ---------------------------------------------------------------------------
@@ -228,8 +191,8 @@ def handle_briefme(token: str, chat_id: str, reply_to_msg_id: str | None,
     caption = f"Here is your briefing for: {role_label or 'this role'}"
 
     try:
-        send_document(token, chat_id, pdf_bytes, pdf_filename, caption,
-                      reply_to=reply_to_msg_id)
+        send_telegram_document(token, chat_id, pdf_bytes, pdf_filename,
+                               caption, reply_to=reply_to_msg_id)
         logging.info("brief delivered as %s", pdf_filename)
     except Exception as e:
         logging.error("sendDocument failed, falling back to message: %s", e)

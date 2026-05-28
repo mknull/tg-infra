@@ -39,7 +39,7 @@ class TestCompressDirection(unittest.TestCase):
         DIRECTION_FILE.unlink(missing_ok=True)
         DIRECTION_SMALL_FILE.unlink(missing_ok=True)
 
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.call_deepseek")
     def test_compresses_full_to_one_sentence(self, mock_call):
         mock_call.return_value = "Prioritize ML research. Skip: data engineering, frontend."
         full = "The candidate wants ML research roles. Also exploring comp bio. No data engineering."
@@ -47,14 +47,14 @@ class TestCompressDirection(unittest.TestCase):
         result = compress_current_direction(full, "fake-key")
         self.assertIn("ML research", result)
 
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.call_deepseek")
     def test_saves_small_file(self, mock_call):
         mock_call.return_value = "Prioritize ML research."
         from lib import compress_current_direction
         compress_current_direction("Full direction...", "fake-key")
         self.assertTrue(DIRECTION_SMALL_FILE.exists())
 
-    @patch("lib.call_deepseek")
+    @patch("lib.direction.call_deepseek")
     def test_no_change_returns_no_change(self, mock_call):
         mock_call.return_value = "no change"
         from lib import compress_current_direction
@@ -80,8 +80,8 @@ class TestUpdateDirection(unittest.TestCase):
         DIRECTION_SMALL_FILE.write_text("Prioritize ML research.\n")
         return "Prioritize ML research."
 
-    @patch("lib.call_deepseek")
-    @patch("lib.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
     def test_writes_new_direction_and_small(self, mock_compress, mock_pro):
         """After update, both files exist."""
         DIRECTION_FILE.write_text("Old: prioritize data science.")
@@ -95,8 +95,8 @@ class TestUpdateDirection(unittest.TestCase):
         self.assertIn("ML research", full)
         self.assertTrue(DIRECTION_SMALL_FILE.exists())
 
-    @patch("lib.call_deepseek")
-    @patch("lib.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
     def test_audit_record_written(self, mock_compress, mock_pro):
         """Direction change logged to audit."""
         DIRECTION_FILE.write_text("Old direction.")
@@ -113,8 +113,8 @@ class TestUpdateDirection(unittest.TestCase):
         self.assertIn("feedback", records[0])
         self.assertEqual(records[0]["feedback"], "change it")
 
-    @patch("lib.call_deepseek")
-    @patch("lib.compress_current_direction")
+    @patch("lib.direction.call_deepseek")
+    @patch("lib.direction.compress_current_direction")
     def test_no_file_creates_first_direction(self, mock_compress, mock_pro):
         """No existing direction → create from feedback."""
         mock_pro.return_value = "First direction: ML research roles."
