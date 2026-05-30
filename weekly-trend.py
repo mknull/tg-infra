@@ -109,7 +109,8 @@ def aggregate(tagged: list[dict]) -> dict:
     }
 
 
-def build_report(profile: str, agg: dict, sends: list[dict]) -> str:
+def build_report(profile: str, agg: dict, sends: list[dict],
+                 api_key: str) -> str:
     """Ask DeepSeek Pro to write a trend report from the aggregation."""
     prompt = (
         "You are a job market analyst. Below is a raw aggregation of structured tags "
@@ -286,7 +287,7 @@ def main() -> None:
     # Generate trend report
     trend_error = None
     try:
-        trend_text = build_report(profile, agg, sends)
+        trend_text = build_report(profile, agg, sends, api_key)
     except Exception as e:
         logging.error("Pro trend analysis failed: %s", e)
         trend_error = e
