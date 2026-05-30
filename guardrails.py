@@ -6,6 +6,7 @@ When the agent loop is built, it calls these before every tool execution.
 """
 
 import json
+import re
 import tempfile
 from pathlib import Path
 
@@ -186,14 +187,19 @@ MAX_CONTENT_LENGTH = 8000
 
 
 def sanitise_fetched_content(text: str, source_url: str) -> str:
-    """Wrap fetched content to isolate it from the system prompt."""
+    """Wrap fetched content to isolate it from the system prompt.
+
+    Strips any occurrence of </fetched_content (case-insensitive) from the
+    text before wrapping, so a malicious page cannot close the isolation tag.
+    """
+    text = re.sub(r"</fetched_content", "", text, flags=re.IGNORECASE)
     domain = url_to_host(source_url)
-    safe = (
+    text = text[:MAX_CONTENT_LENGTH]
+    return (
         f'<fetched_content source="{domain}">\n'
-        f"{text[:MAX_CONTENT_LENGTH]}\n"
+        f"{text}\n"
         f"</fetched_content>"
     )
-    return safe
 
 
 # ---------------------------------------------------------------------------
