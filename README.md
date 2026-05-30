@@ -58,7 +58,7 @@ Channel descriptions live in `state/channels.json` — each entry specifies what
 
 A DeepSeek function-calling agent. The user quotes a job and replies `/briefme` — the agent loads profile files, searches for the company, fetches the listing, and produces a decision-grade brief covering the role, environment, and career-strategic fit. Output is converted to PDF and sent as a Telegram document.
 
-Tools are guardrailed: two-stage URL validation (static blocklist → Flash classifier for unknowns), filesystem sandbox (`.resolve()` on every path), query injection detection, content sanitisation, and a per-brief rate limiter. 27 adversarial tests verify each layer fails closed.
+Tools are guardrailed: URL validation with trusted-domain fast-path (unknown domains blocked), filesystem sandbox (`.resolve()` on every path), query injection detection, content sanitisation with closing-tag stripping, and a per-brief rate limiter. 31 adversarial tests verify each layer fails closed.
 
 ### Adaptive direction
 
@@ -71,7 +71,7 @@ Every decision across every pipeline is recorded to `state/audit/`. The `./audit
 - **Default view** — recent records with inline duplicate warnings
 - **`--summary`** — per-source stats (records vs unique, decision distributions)
 - **`--topology`** — expected vs actual cascade paths with deviation detection
-- **`--health`** — machine-readable check that exits 1 on duplicate evals, broken cascades, agent failures, or tool errors
+- **`--health`** — exits 1 on duplicate evals, broken cascades, direction sync issues, prompt size bloat, delivery failures, agent errors
 
 The audit found the cursor precision bug, the false-positive minute-granularity issue, and the broken cascade from the pre-fix duplicate runs — each before the user noticed them in production.
 
@@ -102,17 +102,20 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ├── state/                  Runtime state (cursors, audit, queue, config, tokens)
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles
 │
-├── test_guardrails.py      27 adversarial guardrail tests
+├── test_guardrails.py      31 adversarial guardrail tests
 ├── test_tools.py           14 tool tests
 ├── test_agent.py           8 agent loop tests
 ├── test_deliver.py         11 delivery routing tests
-├── test_flash.py           9 flash strategy tests
+├── test_flash.py           10 flash strategy tests
 ├── test_direction.py       9 CurrentDirection tests
 ├── test_weekly.py          7 smell investigation tests
 ├── test_feedback.py        4 feedback processing tests
-├── test_integration.py     14 end-to-end prompt assembly tests
+├── test_integration.py     14 prompt assembly tests
+├── test_e2e.py             12 end-to-end integration tests
+├── test_setup.py           13 setup simulation + auth pipeline tests
+├── test_coverage.py        18 branch coverage tests
 │
-├── .github/workflows/ci.yml  CI: run 103 tests + audit health check
+├── .github/workflows/ci.yml  CI: run 151 tests + audit health check
 └── requirements.txt        telethon, markdown, weasyprint, playwright
 ```
 

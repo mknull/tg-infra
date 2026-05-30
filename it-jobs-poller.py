@@ -84,10 +84,7 @@ async def poll_channel(client: TelegramClient, channel: dict) -> None:
 
     for msg in messages:
         ts = msg.date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        try:
-            sender = (await client.get_entity(msg.sender_id)).username or str(msg.sender_id)
-        except Exception:
-            sender = str(msg.sender_id or "unknown")
+        sender = str(msg.sender_id or "unknown")
 
         queue_entry = {
             "content": msg.text,

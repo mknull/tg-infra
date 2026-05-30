@@ -19,3 +19,4 @@ __pycache__/
 source/
 skills/
 state/searxng/
+.coverage

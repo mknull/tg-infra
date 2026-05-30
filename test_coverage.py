@@ -276,7 +276,8 @@ class TestOutlookAuth(unittest.TestCase):
             device_resp, token_resp]
 
         with patch.object(self.oa, "save_token") as mock_save, \
-             patch.dict("os.environ", {"OUTLOOK_CLIENT_ID": "fake-cid"}):
+             patch.object(self.oa, "load_env",
+                          return_value={"OUTLOOK_CLIENT_ID": "fake-cid"}):
             self.oa.main()
             mock_save.assert_called_once()
             self.assertEqual(mock_save.call_args[0][0]["access_token"],
@@ -300,7 +301,8 @@ class TestOutlookAuth(unittest.TestCase):
         mock_urlopen.return_value.__enter__.side_effect = [
             device_resp, pending_resp]
 
-        with patch.dict("os.environ", {"OUTLOOK_CLIENT_ID": "fake-cid"}):
+        with patch.object(self.oa, "load_env",
+                          return_value={"OUTLOOK_CLIENT_ID": "fake-cid"}):
             with self.assertRaises(SystemExit):
                 self.oa.main()
 
