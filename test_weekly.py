@@ -19,7 +19,7 @@ class TestSmellInvestigation(unittest.TestCase):
 
     def test_empty_tagged_returns_empty_smell(self):
         """No tagged records → no smells."""
-        result = wt._build_smell_section([], [], "profile", "direction", "fake-key")
+        result = wt._build_smell_section([], [], [], "profile", "direction", "fake-key")
         self.assertEqual(result, "")
 
     @patch("weekly_trend.call_deepseek")
@@ -28,7 +28,7 @@ class TestSmellInvestigation(unittest.TestCase):
         mock_call.return_value = "No suspicious patterns found."
         tagged = [{"pro": {"tags": {"role_title": "ML Eng", "skills": ["python"]},
                             "decision": "send"}}]
-        wt._build_smell_section(tagged, [], "Profile text", "Explore comp bio", "fake-key")
+        wt._build_smell_section(tagged, [], tagged, "Profile text", "Explore comp bio", "fake-key")
         prompt = mock_call.call_args[0][1]  # second positional arg is the prompt
         self.assertIn("Profile text", prompt)
         self.assertIn("Explore comp bio", prompt)
@@ -44,7 +44,7 @@ class TestSmellInvestigation(unittest.TestCase):
                      "decision": "send"}},
         ]
         # Both sent, but not in sends list (no engagement)
-        result = wt._build_smell_section(tagged, [], "profile", "direction", "fake-key")
+        result = wt._build_smell_section(tagged, [], tagged, "profile", "direction", "fake-key")
         self.assertIn("Data science", result)
 
     @patch("weekly_trend.call_deepseek")
@@ -56,7 +56,7 @@ class TestSmellInvestigation(unittest.TestCase):
              "pro": {"tags": {"role_title": "ML Researcher", "skills": ["pytorch"],
                               "domain": "probabilistic_ml"}}},
         ]
-        result = wt._build_smell_section(tagged, [], "profile", "direction", "fake-key")
+        result = wt._build_smell_section(tagged, [], tagged, "profile", "direction", "fake-key")
         self.assertIn("ML", result)
 
     @patch("weekly_trend.call_deepseek")
@@ -65,7 +65,7 @@ class TestSmellInvestigation(unittest.TestCase):
         mock_call.return_value = "No suspicious patterns detected."
         tagged = [{"pro": {"tags": {"role_title": "X"}, "decision": "send"}}]
         sends = tagged  # all sent jobs were engaged with
-        result = wt._build_smell_section(tagged, sends, "p", "d", "fake-key")
+        result = wt._build_smell_section(tagged, sends, tagged, "p", "d", "fake-key")
         self.assertEqual(result, "")
 
 

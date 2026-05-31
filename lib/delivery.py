@@ -104,21 +104,38 @@ def graph_post(path: str, access_token: str, data: dict,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+        body = resp.read()
+        if not body:
+            return {}
+        return json.loads(body)
 
 
 def send_email(access_token: str, to: str, subject: str,
-               body_text: str) -> None:
-    """Send an email via Microsoft Graph API."""
-    message = {
-        "message": {
-            "subject": subject,
-            "body": {"contentType": "Text", "content": body_text},
-            "toRecipients": [{"emailAddress": {"address": to}}],
-        },
-        "saveToSentItems": True,
+               body_text: str,
+               attachments: list[dict] | None = None) -> None:
+    """Send an email via Microsoft Graph API.
+
+    attachments: list of {"filename": str, "content": str}
+    """
+    msg = {
+        "subject": subject,
+        "body": {"contentType": "Text", "content": body_text},
+        "toRecipients": [{"emailAddress": {"address": to}}],
     }
-    graph_post("/me/sendMail", access_token, message)
+    if attachments:
+        import base64
+        msg["attachments"] = [
+            {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": att["filename"],
+                "contentType": "text/plain",
+                "contentBytes": base64.b64encode(
+                    att["content"].encode("utf-8")).decode("ascii"),
+            }
+            for att in attachments
+        ]
+    graph_post("/me/sendMail", access_token,
+               {"message": msg, "saveToSentItems": True})
 
 
 def _get_bot_token() -> str:
@@ -129,6 +146,7 @@ def deliver(message_type: str, content: str, *,
             file_bytes: bytes | None = None,
             file_name: str | None = None,
             subject: str = "",
+            attachments: list[dict] | None = None,
             ref: str | None = None) -> str | None:
     """Deliver a message through the configured channel.
 
@@ -157,7 +175,8 @@ def deliver(message_type: str, content: str, *,
             if not to:
                 to = load_env().get("OUTLOOK_EMAIL", "")
             if to:
-                send_email(token, to, subject or "Weekly Job Market Trend Report", content)
+                send_email(token, to, subject or "Weekly Job Market Trend Report",
+                           content, attachments=attachments)
                 msg_id = f"email:{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
             else:
                 error = "no recipient configured"

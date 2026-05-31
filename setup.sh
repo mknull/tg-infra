@@ -240,6 +240,7 @@ UNITS=(
     [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it-jobs-triage.py"
     [email-ingest]="Fetch and triage Outlook emails|*-*-* */2:45:00|$PROJECT_DIR/email-ingest-wrap"
     [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly-trend.py"
+    [feedback-poller]="Poll Outlook for replies to weekly reports|*-*-* *:15,45:00|$PYTHON $PROJECT_DIR/feedback-poller.py"
 )
 
 for name in "${!UNITS[@]}"; do
@@ -304,7 +305,7 @@ if [[ ! -f "$TOKEN_FILE" ]]; then
     log "  5. Authenticate Outlook: $PYTHON outlook-auth.py"
 fi
 log "  6. Enable timers:"
-for name in "${!SERVICES[@]}"; do
+for name in "${!UNITS[@]}"; do
     log "     systemctl --user enable --now $name.timer"
 done
 log "========================================"

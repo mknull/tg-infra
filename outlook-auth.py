@@ -52,8 +52,12 @@ def main() -> None:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
-        with urllib.request.urlopen(poll_req, timeout=15) as resp:
-            data = json.loads(resp.read())
+        try:
+            with urllib.request.urlopen(poll_req, timeout=15) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            # Microsoft returns 400 for pending/expired — read the body
+            data = json.loads(e.read())
 
         if "access_token" in data:
             save_token({

@@ -237,6 +237,7 @@ class TestWeeklyBranches(unittest.TestCase):
                           return_value="No suspicious patterns detected."):
             result = self.wt._build_smell_section(
                 [WEEKLY_RECORD_SEND], [WEEKLY_RECORD_SEND],
+                [WEEKLY_RECORD_SEND],
                 "profile", "direction", "fake-key")
         self.assertEqual(result, "")
 

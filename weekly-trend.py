@@ -142,8 +142,9 @@ _SMELL_PROMPT = (
     "CANDIDATE PROFILE:\n{profile}\n\n"
     "CURRENT DIRECTION:\n{direction}\n\n"
     "SENT BUT IGNORED (possible false positives — sent to user, no engagement):\n{sent_not_engaged}\n\n"
-    "FLASH-DISQUALIFIED (possible false negatives — Flash skipped, tags look "
-    "relevant to profile):\n{flash_skipped}\n\n"
+    "FLASH-DISQUALIFIED (possible false negatives — Flash skipped, previews "
+    "and reasons below — look for roles that sound relevant to profile):\n"
+    "{flash_skipped}\n\n"
     "Identify 1-3 patterns that deserve investigation. If the week looks clean, "
     'respond with exactly: "No suspicious patterns detected." '
     "Keep it under 200 words. Be specific about which roles, skills, or domains "
@@ -162,12 +163,13 @@ _FEEDBACK_PROMPT = (
 
 
 def _build_smell_section(tagged: list[dict], sends: list[dict],
+                         all_records: list[dict],
                          profile: str, direction: str, api_key: str) -> str:
     """Generate smell investigation section. Returns empty string if clean."""
-    if not tagged:
+    if not all_records:
         return ""
 
-    # Identify sent-but-ignored (false positive candidates)
+    # Sent-but-ignored (false positive candidates)
     send_ids = {s["msg_id"] for s in sends if "msg_id" in s}
     sent_not_engaged = [
         r for r in tagged
@@ -175,18 +177,18 @@ def _build_smell_section(tagged: list[dict], sends: list[dict],
         and r.get("msg_id") not in send_ids
     ]
 
-    # Identify flash-disqualified with relevant-looking tags
+    # Flash-disqualified — look at preview text, not structured tags
+    # (Pro never ran on these, so there are no tags)
     flash_skipped = [
-        r for r in tagged
-        if r.get("flash", {}).get("decision") == "skip"
-        and r.get("pro", {}).get("tags", {}).get("role_title")
+        r for r in all_records
+        if r.get("flash", {}).get("decision") in ("skip", "irrelevant")
+        and not r.get("pro", {}).get("decision")  # Pro didn't run
     ]
 
     if not sent_not_engaged and not flash_skipped:
         return ""
 
-    # Build summaries
-    def _summarize(records, max_n=5):
+    def _summarize_sends(records, max_n=5):
         lines = []
         for r in records[:max_n]:
             tags = r.get("pro", {}).get("tags", {})
@@ -196,11 +198,19 @@ def _build_smell_section(tagged: list[dict], sends: list[dict],
             )
         return "\n".join(lines) if lines else "(none)"
 
+    def _summarize_skipped(records, max_n=8):
+        lines = []
+        for r in records[:max_n]:
+            preview = r.get("preview", "?")[:120]
+            reason = r.get("flash", {}).get("reason", "?")
+            lines.append(f"  - preview: {preview}\n    flash reason: {reason}")
+        return "\n".join(lines) if lines else "(none)"
+
     prompt = _SMELL_PROMPT.format(
         profile=profile,
         direction=direction or "(not set)",
-        sent_not_engaged=_summarize(sent_not_engaged),
-        flash_skipped=_summarize(flash_skipped),
+        sent_not_engaged=_summarize_sends(sent_not_engaged),
+        flash_skipped=_summarize_skipped(flash_skipped),
     )
 
     try:
@@ -300,7 +310,8 @@ def main() -> None:
         direction = load_current_direction()
     except Exception:
         pass
-    smell_text = _build_smell_section(tagged, sends, profile, direction, api_key)
+    smell_text = _build_smell_section(tagged, sends, records,
+                                       profile, direction, api_key)
 
     # Compose email body
     subject = f"Weekly Job Market Trend Report ({week_start} – {week_end})"
@@ -327,9 +338,7 @@ def main() -> None:
     body_parts.append(build_raw_section(agg, sends))
     body_parts.append(_FEEDBACK_PROMPT)
     body = "\n".join(body_parts)
-    # Note: send_email doesn't support attachments yet; direction files
-    # are referenced in the feedback prompt but not attached until
-    # send_email is extended with MIME multipart support.
+    attachments = _get_direction_attachments()
 
     if DRY_RUN:
         print(f"Subject: {subject}")
@@ -345,7 +354,8 @@ def main() -> None:
 
     try:
         token = ensure_valid_token(env)
-        send_email(token, email_to, subject, body)
+        send_email(token, email_to, subject, body,
+                   attachments=attachments)
         logging.info("weekly report sent to %s", email_to)
         success = True
         error = None
