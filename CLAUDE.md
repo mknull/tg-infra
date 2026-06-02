@@ -2,7 +2,7 @@
 
 ## Design principle
 
-The jobs pipeline (`it-jobs-poller.py`, `it-jobs-triage.py`, `email-triage.py`) is a **standalone Python application**. It must not depend on Claude Code, the Claude CLI, or any Anthropic-specific tooling being present. LLM calls go through the DeepSeek API (raw HTTP) so the scripts run in any environment — cron, systemd, CI, a server — without a Claude Code session.
+The jobs pipeline is a **standalone Python application**. It must not depend on Claude Code, the Claude CLI, or any Anthropic-specific tooling being present. LLM calls go through the DeepSeek API (raw HTTP) so the scripts run in any environment — cron, systemd, CI, a server — without a Claude Code session.
 
 ## Venv
 
@@ -10,12 +10,25 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 
 ## Scripts
 
-- `it-jobs-poller.py` — Telethon poller: reads @it_jobs_cyprus and @cyithr via user API, writes to `state/message_queue/`
-- `it-jobs-triage.py` — Two-model triage: DeepSeek Flash first-pass → DeepSeek Pro full eval → Telegram Bot API delivery
-- `email-triage.py` — Outlook Graph API → DeepSeek Flash header filter → DeepSeek Pro body eval → Telegram Bot API delivery
-- `bot-commands.py` — Oneshot bot-command processor: polls getUpdates, handles /briefme, exits
-- `lib.py` — Shared utilities: load_env, call_deepseek, extract_json, send_telegram, write_audit, and common constants
-- `audit` — CLI for querying the audit trail: `./audit`, `./audit --topology`, `./audit email --today`
+- `it-jobs-poller.py` — Telethon poller: reads Telegram groups via user API, writes to `state/message_queue/`
+- `it-jobs-triage.py` — Two-model triage: incremental 3-line Flash → Pro full eval → delivery
+- `email-triage.py` — Outlook Graph API → Flash header filter → Pro body eval → delivery
+- `bot-commands.py` — Telegram bot: /briefme, /direction, /start, /status, /help
+- `weekly-trend.py` — Weekly market trend report + smell investigation
+- `outlook-auth.py` — One-time Outlook device-code OAuth flow
+- `feedback-poller.py` — Polls Outlook for replies to weekly reports
+- `generate-profile.py` — Two-stage profile generation from user documents
+- `lib/` — Shared utilities: config, api (DeepSeek), delivery, direction, auth, audit
+- `audit` — CLI: `./audit`, `./audit --topology`, `./audit --health`, `./audit email --today`
+
+## Tests
+
+159 tests across 13 files. Run with:
+```
+jobsmcp/bin/python3 -m unittest discover -s . -p 'test_*.py'
+```
+
+CI runs the full suite + `./audit --health` on every push.
 
 ## Commit credit
 

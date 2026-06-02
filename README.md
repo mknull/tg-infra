@@ -115,7 +115,7 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ├── test_setup.py           13 setup simulation + auth pipeline tests
 ├── test_coverage.py        18 branch coverage tests
 │
-├── .github/workflows/ci.yml  CI: run 151 tests + audit health check
+├── .github/workflows/ci.yml  CI: run 159 tests + audit health check
 └── requirements.txt        telethon, markdown, weasyprint, playwright
 ```
 
