@@ -632,6 +632,23 @@ def main():
                 else:
                     print(f"{GREEN}{label}: {csize}B{RESET}")
 
+        # --- poller heartbeat ---
+        heartbeat = os.path.join(STATE, "poller-heartbeat")
+        if os.path.exists(heartbeat):
+            try:
+                hb_time = datetime.fromisoformat(
+                    open(heartbeat).read().strip().replace("Z", "+00:00"))
+                age_min = (datetime.now(timezone.utc) - hb_time).total_seconds() / 60
+                if age_min > 60:
+                    print(f"{RED}POLLER STALL{RESET}: last poll {age_min:.0f}min ago")
+                    exit_code = 1
+                else:
+                    print(f"{GREEN}poller: {age_min:.0f}min ago{RESET}")
+            except Exception:
+                print(f"{YELLOW}poller: unreadable heartbeat{RESET}")
+        else:
+            print(f"{DIM}poller: no heartbeat yet{RESET}")
+
         # --- per-source cascade health ---
         for src in SOURCES:
             records = load_records(src, since=since)

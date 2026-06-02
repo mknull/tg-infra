@@ -132,6 +132,10 @@ async def poll() -> None:
 
     await client.disconnect()
 
+    # Heartbeat: audit --health uses this to detect poller stalls
+    (STATE_DIR / "poller-heartbeat").write_text(
+        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") + "\n")
+
 
 if __name__ == "__main__":
     asyncio.run(poll())
