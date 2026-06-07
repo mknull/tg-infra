@@ -128,6 +128,27 @@ class TestDeliverRouting(unittest.TestCase):
         self.assertIsNone(result)
         self.assertFalse(ref_map.exists())
 
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram", return_value="msg_1")
+    def test_deliver_passes_configured_chat_id(self, mock_send, mock_audit):
+        """deliver() routes the configured chat_id to send_telegram (bug 1.1)."""
+        from lib import deliver
+        deliver("job_match", "hi")
+        _, kwargs = mock_send.call_args
+        self.assertEqual(kwargs.get("chat_id"), "test_chat_123")
+
+    @patch("lib.delivery.write_audit")
+    @patch("lib.delivery.send_telegram", return_value="msg_1")
+    def test_delivery_audit_records_ref_and_channel(self, mock_send, mock_audit):
+        """Egress audit carries provenance (ref → source) and the channel."""
+        from lib import deliver
+        deliver("job_match", "content", ref="email:abc")
+        record = mock_audit.call_args[0][0]
+        self.assertEqual(record["ref"], "email:abc")
+        self.assertEqual(record["channel"], "telegram")
+        self.assertEqual(record["message_type"], "job_match")
+        self.assertTrue(record["success"])
+
 
 class TestDeliverTelegramBackend(unittest.TestCase):
 
@@ -142,6 +163,20 @@ class TestDeliverTelegramBackend(unittest.TestCase):
         from lib import send_telegram
         result = send_telegram("fake-token", "hello world")
         self.assertEqual(result, "42")
+
+    @patch("urllib.request.urlopen")
+    def test_explicit_chat_id_overrides_default(self, mock_urlopen):
+        """An explicit chat_id lands in the request payload (bug 1.1 backend)."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "ok": True, "result": {"message_id": 7}
+        }).encode()
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        from lib import send_telegram
+        send_telegram("fake-token", "hi", chat_id="explicit_chat")
+        req = mock_urlopen.call_args[0][0]
+        self.assertEqual(json.loads(req.data)["chat_id"], "explicit_chat")
 
     @patch("urllib.request.urlopen")
     def test_raises_on_api_error(self, mock_urlopen):

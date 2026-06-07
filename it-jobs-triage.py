@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 load_env, call_deepseek, extract_json, send_telegram, write_audit)
+                 load_env, call_deepseek, extract_json, deliver, write_audit)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,7 +19,6 @@ logging.basicConfig(
 STATE_DIR = Path(__file__).resolve().parent / "state"
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
-REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
 
@@ -238,12 +237,15 @@ def main() -> None:
 
             if pro_decision == "send" and pro_message and bot_token:
                 record["pro"]["message"] = pro_message
+                # origin preserves provenance — which channel/user the job came from
                 origin = f"@{channel} · @{user}"
-                tg_msg_id = send_telegram(bot_token, f"{origin}\n\n{pro_message}")
-                with REF_MAP_FILE.open("a") as f:
-                    f.write(json.dumps({"tg_msg_id": tg_msg_id,
-                                        "ref": record["msg_id"]}) + "\n")
-                logging.info("[%s/%s] sent to Telegram as msg %s", channel, message_id, tg_msg_id)
+                tg_msg_id = deliver("job_match", f"{origin}\n\n{pro_message}",
+                                    ref=record["msg_id"])
+                if tg_msg_id:
+                    logging.info("[%s/%s] delivered to Telegram as msg %s",
+                                 channel, message_id, tg_msg_id)
+                else:
+                    logging.error("[%s/%s] delivery failed", channel, message_id)
         else:
             logging.info("[%s/%s] pro skipped (flash: skip)", channel, message_id)
 

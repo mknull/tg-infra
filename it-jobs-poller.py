@@ -24,9 +24,8 @@ AUDIT_FILE = AUDIT_DIR / "telegram.jsonl"
 SESSION_FILE = STATE_DIR / "it-jobs-session"
 ENV_FILE = STATE_DIR / ".env"
 
-# Each entry: username, cursor file (preserves existing name for it_jobs_cyprus),
-# queue filename prefix used by triage to route messages.
 # Channel config lives in state/channels.json — one entry per monitored channel.
+# Each channel's cursor is stored at state/{username}-cursor.
 
 def load_channels() -> list[dict]:
     with (STATE_DIR / "channels.json").open() as f:
@@ -121,8 +120,16 @@ async def poll_channel(client: TelegramClient, channel: dict) -> None:
 
 async def poll() -> None:
     env = load_env()
-    api_id = int(env.get("TELEGRAM_API_ID") or os.environ.get("TELEGRAM_API_ID", ""))
+    api_id_raw = env.get("TELEGRAM_API_ID") or os.environ.get("TELEGRAM_API_ID", "")
     api_hash = env.get("TELEGRAM_API_HASH") or os.environ.get("TELEGRAM_API_HASH", "")
+    if not api_id_raw or not api_hash:
+        logging.error("TELEGRAM_API_ID / TELEGRAM_API_HASH not set in state/.env")
+        raise SystemExit(1)
+    try:
+        api_id = int(api_id_raw)
+    except ValueError:
+        logging.error("TELEGRAM_API_ID must be an integer, got %r", api_id_raw)
+        raise SystemExit(1)
 
     client = TelegramClient(str(SESSION_FILE), api_id, api_hash)
     await client.start()

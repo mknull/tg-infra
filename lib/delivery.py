@@ -19,6 +19,7 @@ def load_delivery_config() -> dict:
             "brief": "telegram",
             "weekly_report": "email",
             "alert": "telegram",
+            "canary": "telegram",
         },
         "telegram": {"chat_id": TELEGRAM_CHAT_ID},
         "email": {"to": ""},
@@ -34,10 +35,13 @@ def load_delivery_config() -> dict:
     return defaults
 
 
-def send_telegram(bot_token: str, text: str) -> str:
-    """Send a Telegram message. Returns the Telegram message_id."""
+def send_telegram(bot_token: str, text: str, chat_id: str | None = None) -> str:
+    """Send a Telegram message. Returns the Telegram message_id.
+
+    chat_id defaults to the configured TELEGRAM_CHAT_ID when not given.
+    """
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
+    payload = json.dumps({"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text}).encode()
     req = urllib.request.Request(
         url, data=payload,
         headers={"Content-Type": "application/json"},
@@ -168,7 +172,7 @@ def deliver(message_type: str, content: str, *,
                 msg_id = send_telegram_document(
                     _get_bot_token(), chat_id, file_bytes, file_name, content)
             else:
-                msg_id = send_telegram(_get_bot_token(), content)
+                msg_id = send_telegram(_get_bot_token(), content, chat_id=chat_id)
         elif route == "email":
             token = ensure_valid_token(load_env())
             to = cfg["email"]["to"]
@@ -191,6 +195,7 @@ def deliver(message_type: str, content: str, *,
         "success": error is None,
         "error": error,
         "platform_id": msg_id,
+        "ref": ref,
     }, DELIVERY_AUDIT)
 
     if error:

@@ -8,6 +8,8 @@ state/messages/
 state/audit/
 state/feedback.jsonl
 state/ref-map.jsonl
+state/email-failures.json
+state/canary-status.json
 state/*-criteria.md
 state/*.log
 workspace/
