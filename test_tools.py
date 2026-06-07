@@ -74,7 +74,7 @@ class TestWebFetch(unittest.TestCase):
         self.assertIn("blocked", result)
 
     def test_unknown_domain_approved_with_classifier(self):
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return '{"safe": true, "reason": "recruitment site"}'
         result = web_fetch("https://www.antal.com/jobs", flash_fn=mock_flash)
         self.assertNotIn("blocked", result)

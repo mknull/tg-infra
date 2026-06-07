@@ -8,7 +8,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import DEEPSEEK_API_URL, PRO_MODEL, STATE_DIR, PROJECT_DIR, USER_NAME, write_audit
+from lib import (DEEPSEEK_API_URL, PRO_MODEL, FLASH_MODEL, STATE_DIR, PROJECT_DIR,
+                 USER_NAME, call_deepseek, write_audit)
 from tools import read_file, web_search, web_fetch, md_to_pdf
 from guardrails import RateLimiter, BRIEFS_DIR
 
@@ -122,6 +123,8 @@ def run_agent(job_text: str, api_key: str,
     ]
 
     rl = RateLimiter()
+    # Stage-2 domain classifier: bind the real model + key into a (prompt)->str fn
+    flash_fn = lambda prompt: call_deepseek(FLASH_MODEL, prompt, api_key)
     tool_log: list[dict] = []
     started_at = time.monotonic()
     error = None
@@ -179,7 +182,7 @@ def run_agent(job_text: str, api_key: str,
                             result = web_search(args["query"])
                             tool_ok = "search error" not in result
                         elif name == "web_fetch":
-                            result = web_fetch(args["url"], rate_limiter=rl)
+                            result = web_fetch(args["url"], flash_fn=flash_fn, rate_limiter=rl)
                             tool_ok = "fetch blocked" not in result and "fetch error" not in result
                         else:
                             result = f"unknown tool: {name}"

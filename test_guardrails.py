@@ -93,7 +93,7 @@ class TestFetchGuardrails(unittest.TestCase):
 
     def test_stage2_flash_approves_job_domain(self):
         """Flash says a recruitment agency site is safe → allowed."""
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return '{"safe": true, "reason": "recruitment agency job board"}'
         url = "https://www.robertwalters.de/jobs/ml-engineer"
         ok, reason = validate_fetch_url(url, flash_fn=mock_flash)
@@ -101,7 +101,7 @@ class TestFetchGuardrails(unittest.TestCase):
 
     def test_stage2_flash_rejects_non_job_domain(self):
         """Flash says a random site is not job-related → blocked."""
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return '{"safe": false, "reason": "not a job posting site"}'
         url = "https://random-blog.com/posts/123"
         ok, reason = validate_fetch_url(url, flash_fn=mock_flash)
@@ -109,11 +109,50 @@ class TestFetchGuardrails(unittest.TestCase):
 
     def test_stage2_flash_error_defaults_to_block(self):
         """Flash returns bad JSON → blocked (fail closed)."""
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return "not json at all"
         url = "https://some-company.com/careers"
         ok, reason = validate_fetch_url(url, flash_fn=mock_flash)
         self.assertFalse(ok, f"should block on classifier error: got {reason}")
+
+    def test_stage2_flash_raises_fails_closed(self):
+        """Classifier raises (e.g. network/API error) → blocked (fail closed)."""
+        def mock_flash(prompt):
+            raise RuntimeError("API down")
+        url = "https://some-company.com/careers"
+        ok, reason = validate_fetch_url(url, flash_fn=mock_flash)
+        self.assertFalse(ok, f"should block when classifier raises: got {reason}")
+
+    def test_trusted_domain_skips_classifier(self):
+        """Trusted domains fast-path allow WITHOUT invoking the classifier."""
+        calls = []
+        def mock_flash(prompt):
+            calls.append(prompt)
+            return '{"safe": true, "reason": "x"}'
+        ok, reason = validate_fetch_url(
+            "https://www.linkedin.com/jobs/view/1", flash_fn=mock_flash)
+        self.assertTrue(ok, f"trusted domain should be allowed: got {reason}")
+        self.assertEqual([], calls, "classifier must NOT run for trusted domains")
+
+    def test_stage2_classifier_receives_prompt(self):
+        """The injected (prompt)->str fn is called with the classify prompt.
+
+        Asserts the contract: no hardcoded model literal and no 'test-key' —
+        the caller binds model+key, the guardrail only passes the prompt.
+        """
+        captured = []
+        def mock_flash(prompt):
+            captured.append(prompt)
+            return '{"safe": true, "reason": "job board"}'
+        url = "https://www.antal.com/jobs/data-scientist"
+        ok, _ = validate_fetch_url(url, flash_fn=mock_flash)
+        self.assertTrue(ok)
+        self.assertEqual(1, len(captured), "classifier should be called once")
+        prompt = captured[0]
+        self.assertIsInstance(prompt, str)
+        self.assertIn(url, prompt)
+        self.assertIn("classifier", prompt.lower())
+        self.assertNotIn("test-key", prompt)
 
 
 class TestSearchGuardrails(unittest.TestCase):
@@ -343,7 +382,7 @@ class TestAdversarialScenarios(unittest.TestCase):
 
     def test_stage2_bypass_attempt_internal_as_joblike(self):
         """Flash says an internal URL is safe — stage 1 still blocks it."""
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return '{"safe": true, "reason": "looks like a job posting site"}'
         url = "http://127.0.0.1/admin"
         ok, reason = validate_fetch_url(url, flash_fn=mock_flash)
@@ -352,7 +391,7 @@ class TestAdversarialScenarios(unittest.TestCase):
 
     def test_stage2_chain_write_after_approved_fetch(self):
         """Flash approves an unknown recruitment site, but writes outside briefs blocked."""
-        def mock_flash(model, prompt, api_key):
+        def mock_flash(prompt):
             return '{"safe": true, "reason": "recruitment agency"}'
         url = "https://www.antal.com/jobs/data-scientist"
         ok, _ = validate_fetch_url(url, flash_fn=mock_flash)

@@ -67,12 +67,16 @@ def url_to_host(url: str) -> str:
 
 
 def _classify_domain(url: str, flash_fn=None) -> tuple[bool, str]:
-    """Stage 2: ask Flash to classify an unknown domain."""
+    """Stage 2: ask a light model to classify an unknown domain.
+
+    flash_fn(prompt: str) -> str is injected by the caller (the agent binds
+    the real model + API key). When absent, fail closed.
+    """
     if flash_fn is None:
         return False, "no classifier configured"
     prompt = DOMAIN_CLASSIFY_PROMPT.format(url=url)
     try:
-        raw = flash_fn("deepseek-v4-flash", prompt, "test-key")
+        raw = flash_fn(prompt)
         result = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
         safe = result.get("safe", False)
         reason = result.get("reason", "no reason")
@@ -86,8 +90,9 @@ def validate_fetch_url(url: str, flash_fn=None) -> tuple[bool, str]:
 
     Stage 1 (static): block dangerous schemes, internal IPs.
         Fast-path allow if domain is on the trusted list.
-    Stage 2 (Flash): for unknown domains, ask a light model whether
-        the URL looks like a legitimate job posting site.
+    Stage 2 (classifier): for unknown domains, ask a light model whether
+        the URL looks like a legitimate job posting site. The classifier is
+        injected as flash_fn(prompt: str) -> str (model + key bound by caller).
     """
     url_lower = url.lower().strip()
 
