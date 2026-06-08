@@ -16,7 +16,7 @@ from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, ensure_valid_token,
                  call_deepseek, extract_json, send_telegram, deliver, write_audit,
                  setup_logging, read_cursor, write_cursor, graph_get,
-                 resolve_monitored_folder)
+                 resolve_monitored_folder, SeenLedger)
 
 CURSOR_FILE = STATE_DIR / "email-cursor"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
@@ -286,6 +286,7 @@ def advance_batch(emails: list[dict], triage_one, failures: dict, *,
     """
     records: list[dict] = []
     deadletters: list[dict] = []
+    terminal_ids: list[str] = []
     cursor: str | None = None
 
     for msg in emails:
@@ -296,6 +297,7 @@ def advance_batch(emails: list[dict], triage_one, failures: dict, *,
 
         if resolved:
             failures.pop(msg_id, None)
+            terminal_ids.append(msg_id)
             if received:
                 cursor = received
             continue
@@ -319,6 +321,7 @@ def advance_batch(emails: list[dict], triage_one, failures: dict, *,
             deadletters.append(dl)
             record["dead_letter"] = dl
             failures.pop(msg_id, None)
+            terminal_ids.append(msg_id)
             if received:
                 cursor = received  # step over it — must not stall the pipeline
             continue
@@ -326,8 +329,8 @@ def advance_batch(emails: list[dict], triage_one, failures: dict, *,
         # transient failure within budget: stop the batch, retry next run.
         break
 
-    return {"records": records, "cursor": cursor,
-            "deadletters": deadletters, "failures": failures}
+    return {"records": records, "cursor": cursor, "deadletters": deadletters,
+            "failures": failures, "terminal_ids": terminal_ids}
 
 
 def _alert_dead_letter(bot_token: str, dl: dict) -> None:
@@ -390,6 +393,15 @@ def main() -> None:
         logging.info("No new emails.")
         return
 
+    # Idempotency: the cursor only bounds the query — the seen-ledger is the
+    # authoritative gate, so a re-fetched email that was already handled is
+    # never re-evaluated (the duplicate-eval / wasted-call bug).
+    seen = SeenLedger("email")
+    emails = [e for e in emails if e["id"] not in seen]
+    if not emails:
+        logging.info("All fetched emails already processed.")
+        return
+
     logging.info("Processing %d email(s).", len(emails))
     failures = load_failures()
 
@@ -401,6 +413,9 @@ def main() -> None:
     for record in result["records"]:
         write_audit(record, AUDIT_FILE)
     save_failures(result["failures"])
+    for mid in result["terminal_ids"]:
+        seen.add(mid)
+    seen.save()
     if result["cursor"]:
         save_cursor(result["cursor"])
     report_dead_letters(bot_token, result["deadletters"])

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, call_deepseek, extract_json, deliver, write_audit,
-                 setup_logging)
+                 setup_logging, SeenLedger)
 
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
@@ -166,6 +166,7 @@ def main() -> None:
         return
 
     logging.info("Processing %d message(s).", len(files))
+    seen = SeenLedger("telegram")
     for path in files:
         try:
             entry = json.loads(path.read_text())
@@ -195,6 +196,13 @@ def main() -> None:
             "content": content,
             "arrived_at": arrived_at,
         }
+
+        # Idempotency: the poller can re-queue a message (re-fetch at the cursor
+        # boundary); skip anything already brought to a terminal state.
+        if record["msg_id"] in seen:
+            logging.info("[%s/%s] already processed, skipping", channel, message_id)
+            path.unlink(missing_ok=True)
+            continue
 
         # --- Flash ---
         flash_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -248,7 +256,9 @@ def main() -> None:
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         msg_id = record["msg_id"]
         path.rename(MESSAGES_DIR / f"{msg_id}.json")
+        seen.add(msg_id)
 
+    seen.save()
     logging.info("Done.")
 
 

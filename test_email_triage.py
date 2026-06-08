@@ -57,6 +57,24 @@ class TestAdvanceBatch(unittest.TestCase):
         self.assertEqual(res["deadletters"], [])
         self.assertEqual(res["failures"], {})
         self.assertEqual(len(res["records"]), 3)
+        self.assertEqual(set(res["terminal_ids"]), {"e1", "e2", "e3"})
+
+    def test_terminal_ids_exclude_pending_include_deadletter(self):
+        """Exactly-once gate: resolved + dead-lettered ids are terminal; an id
+        still mid-retry is NOT (so it retries and is not marked seen)."""
+        emails = [_email("e1", "2026-06-06T10:00:00Z"),
+                  _email("e2", "2026-06-06T10:01:00Z")]
+        res = et.advance_batch(emails, _make_triage({"e2": "fail"}), {},
+                               now_iso="2026-06-06T11:00:00Z")
+        self.assertEqual(res["terminal_ids"], ["e1"])  # e2 pending, not terminal
+
+        failures = {"e2": {"attempts": et.MAX_DEADLETTER_ATTEMPTS - 1,
+                           "first_seen": "2026-06-06T09:00:00Z"}}
+        res = et.advance_batch([_email("e2", "2026-06-06T10:01:00Z")],
+                               _make_triage({"e2": "fail"}), failures,
+                               now_iso="2026-06-06T12:00:00Z")
+        self.assertIn("e2", res["terminal_ids"])  # now dead-lettered -> terminal
+        self.assertEqual(len(res["deadletters"]), 1)
 
     def test_cursor_is_verbatim_no_plus_one_second(self):
         """Cursor must be the exact receivedDateTime, not a +1s rounding."""

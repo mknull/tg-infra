@@ -10,6 +10,7 @@ from .config import (PROJECT_DIR, STATE_DIR, DEEPSEEK_API_URL,
                      USER_NAME, TELEGRAM_CHAT_ID, load_env)
 from .graph import graph_get, graph_post
 from .state import read_cursor, write_cursor
+from .seen import SeenLedger
 from .log import setup_logging
 from .delivery import (load_delivery_config, deliver,
                        send_telegram, send_telegram_document,
