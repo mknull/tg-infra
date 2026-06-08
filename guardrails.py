@@ -44,13 +44,16 @@ BLOCKED_NETS = (
     "172.30.", "172.31.", "192.168.",
 )
 
-DOMAIN_CLASSIFY_PROMPT = """You are a URL safety classifier. Given a URL, respond with ONLY a JSON object:
+DOMAIN_CLASSIFY_PROMPT = """You are a URL safety classifier for a research agent
+that gathers PUBLIC information about companies, roles, salaries, and people.
+Given a URL, respond with ONLY a JSON object:
 {{"safe": true/false, "reason": "one sentence"}}
 
-A URL is safe if it points to a company career page, a job board, a
-recruitment agency site, or a professional services firm listing jobs.
-It is unsafe if it points to a file server, an admin panel, an internal
-service, a phishing page, or anything not job-related.
+Safe: any legitimate public web page — company sites and career pages, job
+boards, recruitment agencies, salary/news/review sites, professional or
+academic profiles, encyclopaedias, blogs, and similar public information.
+Unsafe: internal services, admin panels, file servers, login/credential or
+phishing pages, or anything that is not a public, informational web page.
 
 URL to classify: {url}"""
 

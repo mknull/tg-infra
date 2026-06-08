@@ -204,6 +204,31 @@ class TestAgentLoop(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_agent("Test", "fake-key")
 
+    def test_forced_finish_delivers_brief_after_turn_limit(self):
+        """Past the turn limit the agent forces a final write, not a hard fail."""
+        tc = {"id": "c1", "type": "function",
+              "function": {"name": "web_search", "arguments": '{"query": "x"}'}}
+        tool_resp = json.dumps({"choices": [{"message": {
+            "role": "assistant", "content": None, "tool_calls": [tc]},
+            "finish_reason": "tool_calls"}]}).encode()
+        final_resp = json.dumps({"choices": [{"message": {
+            "role": "assistant", "content": "# Brief\nForced-finish output."},
+            "finish_reason": "stop"}]}).encode()
+        n = {"i": 0}
+
+        def fake_open(*a, **k):
+            n["i"] += 1
+            cm = MagicMock()
+            cm.read.return_value = final_resp if n["i"] > MAX_TURNS else tool_resp
+            ctx = MagicMock()
+            ctx.__enter__.return_value = cm
+            return ctx
+
+        with patch("agent.web_search", return_value="(no results)"), \
+             patch("agent.urllib.request.urlopen", side_effect=fake_open):
+            brief = run_agent("Test", "fake-key")
+        self.assertIn("Forced-finish", brief)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

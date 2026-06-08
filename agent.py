@@ -105,7 +105,7 @@ _FALLBACK_PROFILE = "Load profile from source/ directory using read_file."
 
 # --- Agent loop ---
 
-MAX_TURNS = 15
+MAX_TURNS = 20
 
 
 def run_agent(job_text: str, api_key: str,
@@ -210,7 +210,34 @@ def run_agent(job_text: str, api_key: str,
                         "content": result,
                     })
 
-        error = f"exceeded {MAX_TURNS} turns without finishing"
+        # Turns exhausted — rather than hard-failing, force one final write from
+        # the research already gathered (tools disabled so the model must answer).
+        messages.append({
+            "role": "user",
+            "content": ("Stop researching now. Using only what you have already "
+                        "gathered, write the complete brief as specified above. "
+                        "Do not call any tools."),
+        })
+        payload = json.dumps({
+            "model": PRO_MODEL,
+            "messages": messages,
+            "tools": TOOLS,
+            "tool_choice": "none",
+        }).encode()
+        req = urllib.request.Request(
+            DEEPSEEK_API_URL, data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            body = json.loads(resp.read())
+        brief = body["choices"][0]["message"].get("content") or ""
+        if brief.strip():
+            _write_agent_audit(audit_meta, brief, tool_log, MAX_TURNS,
+                               started_at, error=None)
+            return brief
+        error = f"exceeded {MAX_TURNS} turns and produced no brief"
         raise RuntimeError(error)
 
     except Exception as e:
