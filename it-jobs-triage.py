@@ -7,16 +7,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 load_env, call_deepseek, extract_json, deliver, write_audit)
+from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
+                 load_env, call_deepseek, extract_json, deliver, write_audit,
+                 setup_logging)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
-
-STATE_DIR = Path(__file__).resolve().parent / "state"
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
 AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
@@ -158,6 +152,7 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str, dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
     api_key = env.get("DEEPSEEK_API_KEY", "")

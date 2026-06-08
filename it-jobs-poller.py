@@ -8,21 +8,15 @@ import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
+from lib import STATE_DIR, load_env, setup_logging, read_cursor, write_cursor
 
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
-STATE_DIR = Path(__file__).resolve().parent / "state"
 QUEUE_DIR = STATE_DIR / "message_queue"
 AUDIT_DIR = STATE_DIR / "audit"
 AUDIT_FILE = AUDIT_DIR / "telegram.jsonl"
 SESSION_FILE = STATE_DIR / "it-jobs-session"
-ENV_FILE = STATE_DIR / ".env"
 
 # Channel config lives in state/channels.json — one entry per monitored channel.
 # Each channel's cursor is stored at state/{username}-cursor.
@@ -32,30 +26,16 @@ def load_channels() -> list[dict]:
         return json.loads(f.read())["channels"]
 
 
-def load_env() -> dict:
-    env = {}
-    try:
-        for line in ENV_FILE.read_text().splitlines():
-            line = line.strip()
-            if line and "=" in line and not line.startswith("#"):
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    except FileNotFoundError:
-        pass
-    return env
-
-
 def load_cursor(cursor_file: Path) -> int | None:
+    val = read_cursor(cursor_file)
     try:
-        val = cursor_file.read_text().strip()
-        return int(val) if val else None
-    except (FileNotFoundError, ValueError):
+        return int(val) if val is not None else None
+    except ValueError:
         return None
 
 
 def save_cursor(cursor_file: Path, msg_id: int) -> None:
-    cursor_file.write_text(str(msg_id))
-    cursor_file.chmod(0o600)
+    write_cursor(cursor_file, str(msg_id))
 
 
 async def poll_channel(client: TelegramClient, channel: dict) -> None:
@@ -119,6 +99,7 @@ async def poll_channel(client: TelegramClient, channel: dict) -> None:
 
 
 async def poll() -> None:
+    setup_logging()
     env = load_env()
     api_id_raw = env.get("TELEGRAM_API_ID") or os.environ.get("TELEGRAM_API_ID", "")
     api_hash = env.get("TELEGRAM_API_HASH") or os.environ.get("TELEGRAM_API_HASH", "")

@@ -12,18 +12,11 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 GRAPH_BASE, TOKEN_ENDPOINT,
-                 load_env, load_token, save_token, ensure_valid_token,
-                 call_deepseek, extract_json, send_telegram, deliver, write_audit)
+from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
+                 load_env, ensure_valid_token,
+                 call_deepseek, extract_json, send_telegram, deliver, write_audit,
+                 setup_logging, read_cursor, write_cursor, graph_get)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
-
-STATE_DIR = Path(__file__).resolve().parent / "state"
 CURSOR_FILE = STATE_DIR / "email-cursor"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
 CRITERIA_FILE = STATE_DIR / "email-triage-criteria.md"
@@ -34,23 +27,6 @@ FAILURES_FILE = STATE_DIR / "email-failures.json"
 # retried across runs; only after MAX_DEADLETTER_ATTEMPTS does it become a
 # dead-letter — a loud, recorded anomaly that should never happen in practice.
 MAX_DEADLETTER_ATTEMPTS = 3
-# ---------------------------------------------------------------------------
-# Graph API
-# ---------------------------------------------------------------------------
-
-def graph_get(path: str, access_token: str, params: dict | None = None) -> dict:
-    url = GRAPH_BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
-
-
 MAILING_LIST_FOLDER = "mailing lists"
 _folder_id_cache: str | None = None
 
@@ -103,15 +79,11 @@ def fetch_body(access_token: str, msg_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def load_cursor() -> str | None:
-    try:
-        val = CURSOR_FILE.read_text().strip()
-        return val if val else None
-    except FileNotFoundError:
-        return None
+    return read_cursor(CURSOR_FILE)
 
 
 def save_cursor(ts: str) -> None:
-    CURSOR_FILE.write_text(ts)
+    write_cursor(CURSOR_FILE, ts)
 
 
 def flash_header_triage(from_addr: str, subject: str, api_key: str) -> tuple[str, str]:
@@ -387,6 +359,7 @@ def report_dead_letters(bot_token: str, deadletters: list[dict],
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")

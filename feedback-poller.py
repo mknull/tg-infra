@@ -1,32 +1,23 @@
 #!/usr/bin/env python3
 """Poll Outlook sent items for replies to the weekly report, process feedback."""
 
-import json
 import logging
 import sys
-import urllib.request
 from datetime import datetime, timezone, timedelta
 
-from lib import (GRAPH_BASE, STATE_DIR, PROJECT_DIR,
-                 load_env, ensure_valid_token, update_current_direction)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-)
+from lib import (STATE_DIR, PROJECT_DIR, load_env, ensure_valid_token,
+                 update_current_direction, setup_logging, read_cursor,
+                 write_cursor, graph_get)
 
 CURSOR_FILE = STATE_DIR / "feedback-cursor"
 
 
 def _load_cursor() -> str | None:
-    try:
-        return CURSOR_FILE.read_text().strip()
-    except FileNotFoundError:
-        return None
+    return read_cursor(CURSOR_FILE)
 
 
 def _save_cursor(val: str) -> None:
-    CURSOR_FILE.write_text(val + "\n")
+    write_cursor(CURSOR_FILE, val)
 
 
 def _check_for_replies(access_token: str) -> dict | None:
@@ -36,13 +27,8 @@ def _check_for_replies(access_token: str) -> dict | None:
         "$filter=contains(subject,'Weekly Job Market Trend Report')"
         "&$top=1&$orderby=sentDateTime desc"
     )
-    url = f"{GRAPH_BASE}/me/mailFolders/sentitems/messages?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        sent = json.loads(resp.read())
+    sent = graph_get(f"/me/mailFolders/sentitems/messages?{params}",
+                     access_token, timeout=15)
 
     if not sent.get("value"):
         logging.info("no weekly report found in sent items")
@@ -61,13 +47,7 @@ def _check_for_replies(access_token: str) -> dict | None:
         f"$filter=conversationId eq '{conversation_id}'"
         "&$top=10&$orderby=receivedDateTime desc"
     )
-    url = f"{GRAPH_BASE}/me/messages?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-    )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        thread = json.loads(resp.read())
+    thread = graph_get(f"/me/messages?{params}", access_token, timeout=15)
 
     cursor = _load_cursor()
     for msg in thread.get("value", []):
@@ -100,6 +80,7 @@ def _strip_html(text: str) -> str:
 
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     if not api_key:

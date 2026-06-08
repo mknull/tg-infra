@@ -10,12 +10,7 @@ from pathlib import Path
 
 from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL,
                  load_env, call_deepseek, write_audit, send_email,
-                 ensure_valid_token)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-)
+                 ensure_valid_token, setup_logging)
 
 AUDIT_DIR = STATE_DIR / "audit"
 WEEKLY_AUDIT_FILE = AUDIT_DIR / "weekly.jsonl"
@@ -262,6 +257,7 @@ def build_raw_section(agg: dict, sends: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     email_to = env.get("OUTLOOK_EMAIL", "")
