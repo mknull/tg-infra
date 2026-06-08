@@ -7,7 +7,8 @@ import urllib.request
 
 from .audit import write_audit
 from .auth import ensure_valid_token
-from .config import STATE_DIR, GRAPH_BASE, TELEGRAM_CHAT_ID, load_env
+from .config import STATE_DIR, TELEGRAM_CHAT_ID, load_env
+from .graph import graph_post
 
 
 def load_delivery_config() -> dict:
@@ -92,26 +93,6 @@ def send_telegram_document(bot_token: str, chat_id: str, file_bytes: bytes,
     if not result.get("ok"):
         raise RuntimeError(f"sendDocument error: {result}")
     return str(result["result"]["message_id"])
-
-
-def graph_post(path: str, access_token: str, data: dict,
-               timeout: int = 30) -> dict:
-    """POST JSON to Microsoft Graph API. Returns parsed response."""
-    url = GRAPH_BASE + path
-    payload = json.dumps(data).encode()
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read()
-        if not body:
-            return {}
-        return json.loads(body)
 
 
 def send_email(access_token: str, to: str, subject: str,
