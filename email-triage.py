@@ -15,7 +15,8 @@ from pathlib import Path
 from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, ensure_valid_token,
                  call_deepseek, extract_json, send_telegram, deliver, write_audit,
-                 setup_logging, read_cursor, write_cursor, graph_get)
+                 setup_logging, read_cursor, write_cursor, graph_get,
+                 resolve_monitored_folder)
 
 CURSOR_FILE = STATE_DIR / "email-cursor"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
@@ -27,27 +28,26 @@ FAILURES_FILE = STATE_DIR / "email-failures.json"
 # retried across runs; only after MAX_DEADLETTER_ATTEMPTS does it become a
 # dead-letter — a loud, recorded anomaly that should never happen in practice.
 MAX_DEADLETTER_ATTEMPTS = 3
-MAILING_LIST_FOLDER = "mailing lists"
 _folder_id_cache: str | None = None
 
 
-def _resolve_folder_id(access_token: str) -> str:
-    """Find the mailing-lists folder ID. Cached for the lifetime of the process."""
+def _resolve_folder_id(access_token: str, folder_name: str) -> str:
+    """Find the monitored folder's ID. Cached for the lifetime of the process."""
     global _folder_id_cache
     if _folder_id_cache:
         return _folder_id_cache
     result = graph_get(
         "/me/mailFolders", access_token,
-        {"$filter": f"displayName eq '{MAILING_LIST_FOLDER}'", "$select": "id", "$top": "1"},
+        {"$filter": f"displayName eq '{folder_name}'", "$select": "id", "$top": "1"},
     )
     folders = result.get("value", [])
     if not folders:
-        raise RuntimeError(f"Outlook folder '{MAILING_LIST_FOLDER}' not found")
+        raise RuntimeError(f"Outlook folder '{folder_name}' not found")
     _folder_id_cache = folders[0]["id"]
     return _folder_id_cache
 
 
-def fetch_emails(access_token: str, cursor: str | None) -> list[dict]:
+def fetch_emails(access_token: str, cursor: str | None, folder_name: str) -> list[dict]:
     if cursor:
         filter_expr = f"receivedDateTime gt {cursor}"
     else:
@@ -60,7 +60,7 @@ def fetch_emails(access_token: str, cursor: str | None) -> list[dict]:
         "$orderby": "receivedDateTime asc",
         "$top": "50",
     }
-    folder_id = _resolve_folder_id(access_token)
+    folder_id = _resolve_folder_id(access_token, folder_name)
     return graph_get(f"/me/mailFolders/{folder_id}/messages", access_token, params).get("value", [])
 
 
@@ -367,6 +367,17 @@ def main() -> None:
         logging.error("DEEPSEEK_API_KEY not set in .env")
         sys.exit(1)
 
+    folder_raw = env.get("OUTLOOK_FOLDER", "")
+    if not folder_raw.strip():
+        logging.info("OUTLOOK_FOLDER not set — email triage disabled.")
+        return
+    try:
+        folder = resolve_monitored_folder(
+            folder_raw, env.get("OUTLOOK_FOLDER_CONFIRM", ""))
+    except ValueError as e:
+        logging.error("%s", e)
+        sys.exit(1)
+
     try:
         access_token = ensure_valid_token(env)
     except Exception as e:
@@ -374,7 +385,7 @@ def main() -> None:
         sys.exit(1)
 
     cursor = load_cursor()
-    emails = fetch_emails(access_token, cursor)
+    emails = fetch_emails(access_token, cursor, folder)
     if not emails:
         logging.info("No new emails.")
         return

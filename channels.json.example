@@ -1,0 +1,12 @@
+{
+  "channels": [
+    {
+      "username": "CHANGE_ME",
+      "queue_prefix": "jobs",
+      "description": "What this channel posts — describe it in a sentence",
+      "message_format": "How messages look — length, structure, typical content",
+      "desired_roles": "Roles you most want to find here",
+      "acceptable_roles": "Roles you will also consider"
+    }
+  ]
+}

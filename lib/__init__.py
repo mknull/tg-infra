@@ -19,3 +19,5 @@ from .direction import (DIRECTION_FILE, DIRECTION_AUDIT_FILE,
                         load_current_direction_small,
                         compress_current_direction,
                         update_current_direction)
+from .onboarding import (resolve_monitored_folder, missing_required,
+                         channels_are_placeholder, INBOX_OVERRIDE, REQUIRED_ENV)

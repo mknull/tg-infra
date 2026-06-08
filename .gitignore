@@ -22,3 +22,5 @@ source/
 skills/
 state/searxng/
 .coverage
+state/channels.json
+state/poller-heartbeat
