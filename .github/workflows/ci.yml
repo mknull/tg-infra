@@ -29,6 +29,14 @@ jobs:
       - name: Install playwright browser
         run: python -m playwright install chromium
 
+      - name: Provision test state
+        # state/ is gitignored (no author config is shipped), so a fresh
+        # checkout has no state/ dir. Seed a channels.json from the shipped
+        # example so the channels/prompt-assembly tests have config to read.
+        run: |
+          mkdir -p state
+          cp channels.json.example state/channels.json
+
       - name: Run tests
         run: python -m unittest discover -s . -p 'test_*.py' -v
 
