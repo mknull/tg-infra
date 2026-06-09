@@ -22,6 +22,20 @@ SOURCES = {"email": "email.jsonl", "telegram": "telegram.jsonl",
 FEEDBACK_FILE = os.path.join(STATE, "feedback.jsonl")
 REF_MAP_FILE = os.path.join(STATE, "ref-map.jsonl")
 
+
+def _cursor_files():
+    """(label, filename) for each cursor. Telegram cursors are derived from
+    channels.json so the names track the poller, which writes {username}-cursor."""
+    cursors = [("email", "email-cursor")]
+    try:
+        with open(os.path.join(STATE, "channels.json")) as f:
+            for ch in json.load(f)["channels"]:
+                u = ch["username"]
+                cursors.append((u, f"{u}-cursor"))
+    except (FileNotFoundError, KeyError, json.JSONDecodeError):
+        pass
+    return cursors
+
 # ── feedback ─────────────────────────────────────────────────────
 
 def load_feedback():
@@ -702,6 +716,28 @@ def main():
                     print(f"{GREEN}{src}: clean{RESET}")
             else:
                 print(f"{DIM}{src}: no data in window{RESET}")
+
+        # --- dead-letter health (invariant: zero dead emails) ---
+        deadletter_file = os.path.join(AUDIT_DIR, "dead-letter.jsonl")
+        if os.path.exists(deadletter_file):
+            dead = []
+            with open(deadletter_file) as f:
+                for line in f:
+                    if line.strip():
+                        r = json.loads(line)
+                        if r.get("at", "") >= since:
+                            dead.append(r)
+            if dead:
+                print(f"{RED}DEAD LETTERS{RESET}: {len(dead)} email(s) could not be "
+                      f"processed and were dropped — this should never happen:")
+                for r in dead:
+                    print(f"  {RED}✗{RESET} \"{r.get('preview','?')}\" from "
+                          f"{r.get('sender','?')} ({r.get('attempts','?')} attempts: "
+                          f"{r.get('error','?')})")
+                exit_code = 1
+            else:
+                print(f"{GREEN}dead-letters: none in window{RESET}")
+
         # --- delivery audit health ---
         delivery_file = os.path.join(AUDIT_DIR, "delivery.jsonl")
         if os.path.exists(delivery_file):
@@ -727,6 +763,22 @@ def main():
                 print(f"{DIM}delivery: no data in window{RESET}")
         else:
             print(f"{DIM}delivery: no file{RESET}")
+
+        # --- canary health (synthetic delivery probe — real outcome) ---
+        canary_status = os.path.join(STATE, "canary-status.json")
+        if os.path.exists(canary_status):
+            try:
+                c = json.loads(open(canary_status).read())
+                if c.get("ok"):
+                    print(f"{GREEN}canary: delivering{RESET} (last run {c.get('at','?')})")
+                else:
+                    print(f"{RED}CANARY FAILED{RESET}: delivery is broken — "
+                          f"{c.get('detail','?')} (last run {c.get('at','?')})")
+                    exit_code = 1
+            except Exception:
+                print(f"{YELLOW}canary: unreadable status{RESET}")
+        else:
+            print(f"{DIM}canary: never run{RESET}")
 
         # --- weekly report health ---
         weekly_file = os.path.join(AUDIT_DIR, "weekly.jsonl")
@@ -770,9 +822,7 @@ def main():
             print_topology(cascades, src, feedback, args.days)
         # footer
         print(f"{DIM}── cursors{RESET}")
-        for cursor_name, src in [("email", "email-cursor"),
-                                  ("it_jobs_cyprus", "it-jobs-cursor"),
-                                  ("cyithr", "cyithr-cursor")]:
+        for cursor_name, src in _cursor_files():
             cursor_path = os.path.join(STATE, src)
             if os.path.exists(cursor_path):
                 val = open(cursor_path).read().strip()
@@ -803,9 +853,7 @@ def main():
     if not args.summary:
         # cursors + feedback presence
         print(f"{DIM}── cursors{RESET}")
-        for cursor_name, src in [("email", "email-cursor"),
-                                  ("it_jobs_cyprus", "it-jobs-cursor"),
-                                  ("cyithr", "cyithr-cursor")]:
+        for cursor_name, src in _cursor_files():
             cursor_path = os.path.join(STATE, src)
             if os.path.exists(cursor_path):
                 val = open(cursor_path).read().strip()

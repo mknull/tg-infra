@@ -16,12 +16,7 @@ import sys
 from pathlib import Path
 
 from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL, USER_NAME as _DEFAULT_NAME,
-                 load_env, call_deepseek)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-)
+                 load_env, call_deepseek, setup_logging)
 
 GEN_DIR = PROJECT_DIR / "source"
 _SOURCE_DIR = PROJECT_DIR / "source"  # always reads from source/ (never overridden)
@@ -333,6 +328,7 @@ def stage2_generate_criteria(user_name: str, api_key: str,
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     import argparse
     p = argparse.ArgumentParser(description="Generate user-specific profile files")
     p.add_argument("--docs", type=Path,

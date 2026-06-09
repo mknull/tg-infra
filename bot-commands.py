@@ -9,18 +9,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, PRO_MODEL, load_env, call_deepseek,
-                 send_telegram_document)
+from lib import (load_env, send_telegram_document, STATE_DIR,
+                 setup_logging, read_cursor, write_cursor)
 from agent import run_agent
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
-
 PROJECT_DIR = Path(__file__).resolve().parent
-STATE_DIR = PROJECT_DIR / "state"
 MESSAGES_DIR = STATE_DIR / "messages"
 REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_DIR = STATE_DIR / "audit"
@@ -36,14 +29,15 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 
 def load_cursor() -> int:
+    val = read_cursor(CURSOR_FILE)
     try:
-        return int(CURSOR_FILE.read_text().strip())
-    except (FileNotFoundError, ValueError):
+        return int(val) if val is not None else 0
+    except ValueError:
         return 0
 
 
 def save_cursor(update_id: int) -> None:
-    CURSOR_FILE.write_text(str(update_id))
+    write_cursor(CURSOR_FILE, str(update_id))
 
 
 # ---------------------------------------------------------------------------
@@ -220,6 +214,7 @@ def handle_reaction(chat_id: str, msg_id: str, user_id: str,
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     token = env.get("TELEGRAM_BOT_TOKEN", "")
     api_key = env.get("DEEPSEEK_API_KEY", "")

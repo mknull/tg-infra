@@ -7,7 +7,8 @@ import urllib.request
 
 from .audit import write_audit
 from .auth import ensure_valid_token
-from .config import STATE_DIR, GRAPH_BASE, TELEGRAM_CHAT_ID, load_env
+from .config import STATE_DIR, TELEGRAM_CHAT_ID, load_env
+from .graph import graph_post
 
 
 def load_delivery_config() -> dict:
@@ -19,6 +20,7 @@ def load_delivery_config() -> dict:
             "brief": "telegram",
             "weekly_report": "email",
             "alert": "telegram",
+            "canary": "telegram",
         },
         "telegram": {"chat_id": TELEGRAM_CHAT_ID},
         "email": {"to": ""},
@@ -34,10 +36,13 @@ def load_delivery_config() -> dict:
     return defaults
 
 
-def send_telegram(bot_token: str, text: str) -> str:
-    """Send a Telegram message. Returns the Telegram message_id."""
+def send_telegram(bot_token: str, text: str, chat_id: str | None = None) -> str:
+    """Send a Telegram message. Returns the Telegram message_id.
+
+    chat_id defaults to the configured TELEGRAM_CHAT_ID when not given.
+    """
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
+    payload = json.dumps({"chat_id": chat_id or TELEGRAM_CHAT_ID, "text": text}).encode()
     req = urllib.request.Request(
         url, data=payload,
         headers={"Content-Type": "application/json"},
@@ -88,26 +93,6 @@ def send_telegram_document(bot_token: str, chat_id: str, file_bytes: bytes,
     if not result.get("ok"):
         raise RuntimeError(f"sendDocument error: {result}")
     return str(result["result"]["message_id"])
-
-
-def graph_post(path: str, access_token: str, data: dict,
-               timeout: int = 30) -> dict:
-    """POST JSON to Microsoft Graph API. Returns parsed response."""
-    url = GRAPH_BASE + path
-    payload = json.dumps(data).encode()
-    req = urllib.request.Request(
-        url, data=payload,
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read()
-        if not body:
-            return {}
-        return json.loads(body)
 
 
 def send_email(access_token: str, to: str, subject: str,
@@ -168,7 +153,7 @@ def deliver(message_type: str, content: str, *,
                 msg_id = send_telegram_document(
                     _get_bot_token(), chat_id, file_bytes, file_name, content)
             else:
-                msg_id = send_telegram(_get_bot_token(), content)
+                msg_id = send_telegram(_get_bot_token(), content, chat_id=chat_id)
         elif route == "email":
             token = ensure_valid_token(load_env())
             to = cfg["email"]["to"]
@@ -191,6 +176,7 @@ def deliver(message_type: str, content: str, *,
         "success": error is None,
         "error": error,
         "platform_id": msg_id,
+        "ref": ref,
     }, DELIVERY_AUDIT)
 
     if error:

@@ -12,60 +12,42 @@ import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 GRAPH_BASE, TOKEN_ENDPOINT,
-                 load_env, load_token, save_token, ensure_valid_token,
-                 call_deepseek, extract_json, send_telegram, write_audit)
+from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
+                 load_env, ensure_valid_token,
+                 call_deepseek, extract_json, send_telegram, deliver, write_audit,
+                 setup_logging, read_cursor, write_cursor, graph_get,
+                 resolve_monitored_folder, SeenLedger)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
-
-STATE_DIR = Path(__file__).resolve().parent / "state"
 CURSOR_FILE = STATE_DIR / "email-cursor"
-REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
 CRITERIA_FILE = STATE_DIR / "email-triage-criteria.md"
-# ---------------------------------------------------------------------------
-# Graph API
-# ---------------------------------------------------------------------------
+DEADLETTER_FILE = STATE_DIR / "audit" / "dead-letter.jsonl"
+FAILURES_FILE = STATE_DIR / "email-failures.json"
 
-def graph_get(path: str, access_token: str, params: dict | None = None) -> dict:
-    url = GRAPH_BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {access_token}"},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
-
-
-MAILING_LIST_FOLDER = "mailing lists"
+# Invariant: no email is ever silently lost. A message that fails to process is
+# retried across runs; only after MAX_DEADLETTER_ATTEMPTS does it become a
+# dead-letter — a loud, recorded anomaly that should never happen in practice.
+MAX_DEADLETTER_ATTEMPTS = 3
 _folder_id_cache: str | None = None
 
 
-def _resolve_folder_id(access_token: str) -> str:
-    """Find the mailing-lists folder ID. Cached for the lifetime of the process."""
+def _resolve_folder_id(access_token: str, folder_name: str) -> str:
+    """Find the monitored folder's ID. Cached for the lifetime of the process."""
     global _folder_id_cache
     if _folder_id_cache:
         return _folder_id_cache
     result = graph_get(
         "/me/mailFolders", access_token,
-        {"$filter": f"displayName eq '{MAILING_LIST_FOLDER}'", "$select": "id", "$top": "1"},
+        {"$filter": f"displayName eq '{folder_name}'", "$select": "id", "$top": "1"},
     )
     folders = result.get("value", [])
     if not folders:
-        raise RuntimeError(f"Outlook folder '{MAILING_LIST_FOLDER}' not found")
+        raise RuntimeError(f"Outlook folder '{folder_name}' not found")
     _folder_id_cache = folders[0]["id"]
     return _folder_id_cache
 
 
-def fetch_emails(access_token: str, cursor: str | None) -> list[dict]:
+def fetch_emails(access_token: str, cursor: str | None, folder_name: str) -> list[dict]:
     if cursor:
         filter_expr = f"receivedDateTime gt {cursor}"
     else:
@@ -78,7 +60,7 @@ def fetch_emails(access_token: str, cursor: str | None) -> list[dict]:
         "$orderby": "receivedDateTime asc",
         "$top": "50",
     }
-    folder_id = _resolve_folder_id(access_token)
+    folder_id = _resolve_folder_id(access_token, folder_name)
     return graph_get(f"/me/mailFolders/{folder_id}/messages", access_token, params).get("value", [])
 
 
@@ -97,15 +79,11 @@ def fetch_body(access_token: str, msg_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 def load_cursor() -> str | None:
-    try:
-        val = CURSOR_FILE.read_text().strip()
-        return val if val else None
-    except FileNotFoundError:
-        return None
+    return read_cursor(CURSOR_FILE)
 
 
 def save_cursor(ts: str) -> None:
-    CURSOR_FILE.write_text(ts)
+    write_cursor(CURSOR_FILE, ts)
 
 
 def flash_header_triage(from_addr: str, subject: str, api_key: str) -> tuple[str, str]:
@@ -157,15 +135,250 @@ def pro_body_triage(
 
 
 # ---------------------------------------------------------------------------
+# dead-letter state
+# ---------------------------------------------------------------------------
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def load_failures() -> dict:
+    """Cross-run failure ledger: {msg_id: {attempts, first_seen, error}}."""
+    try:
+        return json.loads(FAILURES_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_failures(failures: dict) -> None:
+    FAILURES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    FAILURES_FILE.write_text(json.dumps(failures))
+
+
+def _record_error(record: dict) -> str:
+    """Pull the error string out of a record's failed flash/pro stage."""
+    for stage in ("pro", "flash"):
+        s = record.get(stage, {})
+        if s.get("decision") == "error":
+            return s.get("reason", "unknown error")
+    return "unknown error"
+
+
+# ---------------------------------------------------------------------------
+# per-email triage — returns (record, resolved)
+# ---------------------------------------------------------------------------
+
+def triage_email(msg: dict, access_token: str, api_key: str,
+                 bot_token: str) -> tuple[dict, bool]:
+    """Triage one email. Returns (audit_record, resolved).
+
+    resolved is True iff the email reached a terminal classification this run
+    (flash skip, or flash read → pro skip/send). It is False on any stage error
+    — the caller then decides retry vs. dead-letter. A delivery failure does not
+    mark the email unresolved (the email *was* classified); delivery health is
+    tracked separately.
+    """
+    msg_id = msg["id"]
+    from_addr = msg.get("from", {}).get("emailAddress", {}).get("address", "unknown")
+    subject = msg.get("subject", "(no subject)")
+    received = msg.get("receivedDateTime", "")
+
+    logging.info("[email] arrived=%s | \"%s\"", received, subject[:100])
+
+    record = {
+        "msg_id": msg_id,
+        "source": "email",
+        "sender": from_addr,
+        "preview": subject,
+        "arrived_at": received,
+    }
+
+    # --- Flash (in-run retries for transient blips) ---
+    flash_error = None
+    for attempt in range(3):
+        try:
+            decision, reason = flash_header_triage(from_addr, subject, api_key)
+            flash_error = None
+            break
+        except Exception as e:
+            flash_error = e
+            if attempt < 2:
+                logging.warning("[email] flash error (attempt %d/3): %s", attempt + 1, e)
+                time.sleep(2 ** attempt)
+
+    if flash_error:
+        logging.error("[email] flash error after 3 attempts: %s", flash_error)
+        record["flash"] = {"model": FLASH_MODEL, "decision": "error",
+                           "reason": str(flash_error), "at": _now()}
+        return record, False
+
+    record["flash"] = {"model": FLASH_MODEL, "decision": decision,
+                       "reason": reason, "at": _now()}
+    logging.info("[email] flash → %s | %s", decision, reason)
+
+    email_content = ""
+    if decision == "read":
+        try:
+            body_text = fetch_body(access_token, msg_id)
+        except Exception as e:
+            logging.error("[email] body fetch error: %s", e)
+            record["pro"] = {"model": PRO_MODEL, "decision": "error",
+                             "reason": f"body fetch: {e}", "at": _now(), "tags": {}}
+            return record, False
+
+        pro_error = None
+        for attempt in range(3):
+            try:
+                bd, br, bm, bt = pro_body_triage(from_addr, subject, body_text, api_key)
+                pro_error = None
+                break
+            except Exception as e:
+                pro_error = e
+                if attempt < 2:
+                    logging.warning("[email] pro error (attempt %d/3): %s", attempt + 1, e)
+                    time.sleep(2 ** attempt)
+
+        if pro_error:
+            logging.error("[email] pro error after 3 attempts: %s", pro_error)
+            record["pro"] = {"model": PRO_MODEL, "decision": "error",
+                             "reason": str(pro_error), "at": _now(), "tags": {}}
+            return record, False
+
+        record["pro"] = {"model": PRO_MODEL, "decision": bd, "reason": br,
+                         "at": _now(), "tags": bt}
+        logging.info("[email] pro → %s | %s", bd, br)
+
+        if bd == "send" and bm and bot_token:
+            record["pro"]["message"] = bm
+            # origin preserves provenance — sender/subject of the source email
+            origin = f"{subject} · {from_addr}"
+            tg_msg_id = deliver("job_match", f"{origin}\n\n{bm}", ref=msg_id)
+            if tg_msg_id:
+                logging.info("[email] delivered to Telegram as msg %s", tg_msg_id)
+            else:
+                logging.error("[email] delivery failed for %s", msg_id)
+
+        email_content = body_text
+
+    record["content"] = email_content or subject
+    return record, True
+
+
+# ---------------------------------------------------------------------------
+# batch orchestration — the zero-loss invariant lives here (pure, testable)
+# ---------------------------------------------------------------------------
+
+def advance_batch(emails: list[dict], triage_one, failures: dict, *,
+                  now_iso: str,
+                  max_attempts: int = MAX_DEADLETTER_ATTEMPTS) -> dict:
+    """Process a fetched batch, never losing an email.
+
+    Emails arrive ordered by receivedDateTime ascending. We advance the cursor
+    only over a contiguous prefix of *resolved-or-dead-lettered* emails. The
+    first email that fails transiently (still within its retry budget) stops the
+    batch — the cursor never moves past it, so it (and everything after) is
+    re-fetched next run. This guarantees no email is skipped and none is
+    re-delivered. An email that exhausts its budget is dead-lettered: recorded,
+    surfaced, and stepped over so it cannot stall the pipeline forever.
+
+    Returns {records, cursor, deadletters, failures}. cursor is the verbatim
+    receivedDateTime of the last resolved/dead email, or None to leave it.
+    """
+    records: list[dict] = []
+    deadletters: list[dict] = []
+    terminal_ids: list[str] = []
+    cursor: str | None = None
+
+    for msg in emails:
+        msg_id = msg["id"]
+        received = msg.get("receivedDateTime", "")
+        record, resolved = triage_one(msg)
+        records.append(record)
+
+        if resolved:
+            failures.pop(msg_id, None)
+            terminal_ids.append(msg_id)
+            if received:
+                cursor = received
+            continue
+
+        info = failures.get(msg_id) or {"attempts": 0, "first_seen": now_iso}
+        info["attempts"] = info.get("attempts", 0) + 1
+        info["error"] = _record_error(record)
+        failures[msg_id] = info
+
+        if info["attempts"] >= max_attempts:
+            dl = {
+                "msg_id": msg_id,
+                "source": "email",
+                "sender": record.get("sender", "?"),
+                "preview": record.get("preview", "?"),
+                "attempts": info["attempts"],
+                "first_seen": info["first_seen"],
+                "error": info["error"],
+                "at": now_iso,
+            }
+            deadletters.append(dl)
+            record["dead_letter"] = dl
+            failures.pop(msg_id, None)
+            terminal_ids.append(msg_id)
+            if received:
+                cursor = received  # step over it — must not stall the pipeline
+            continue
+
+        # transient failure within budget: stop the batch, retry next run.
+        break
+
+    return {"records": records, "cursor": cursor, "deadletters": deadletters,
+            "failures": failures, "terminal_ids": terminal_ids}
+
+
+def _alert_dead_letter(bot_token: str, dl: dict) -> None:
+    """Loud, one-shot Telegram alert — a dead-letter should never happen."""
+    if not bot_token:
+        return
+    try:
+        send_telegram(
+            bot_token,
+            f"⚠️ Email could not be processed after {dl['attempts']} attempts "
+            f"and was dead-lettered:\n\n{dl['preview']}\nfrom {dl['sender']}\n\n"
+            f"Error: {dl['error']}\n\nThis should not happen — please investigate.")
+    except Exception as e:
+        logging.error("[email] dead-letter alert failed: %s", e)
+
+
+def report_dead_letters(bot_token: str, deadletters: list[dict],
+                        deadletter_file=DEADLETTER_FILE) -> None:
+    """Persist each death durably and raise the alarm."""
+    for dl in deadletters:
+        write_audit(dl, deadletter_file)
+        _alert_dead_letter(bot_token, dl)
+        logging.error("[email] DEAD-LETTER after %d attempts: \"%s\" from %s — %s",
+                      dl["attempts"], dl["preview"], dl["sender"], dl["error"])
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
     if not api_key:
         logging.error("DEEPSEEK_API_KEY not set in .env")
+        sys.exit(1)
+
+    folder_raw = env.get("OUTLOOK_FOLDER", "")
+    if not folder_raw.strip():
+        logging.info("OUTLOOK_FOLDER not set — email triage disabled.")
+        return
+    try:
+        folder = resolve_monitored_folder(
+            folder_raw, env.get("OUTLOOK_FOLDER_CONFIRM", ""))
+    except ValueError as e:
+        logging.error("%s", e)
         sys.exit(1)
 
     try:
@@ -175,118 +388,37 @@ def main() -> None:
         sys.exit(1)
 
     cursor = load_cursor()
-    emails = fetch_emails(access_token, cursor)
-
+    emails = fetch_emails(access_token, cursor, folder)
     if not emails:
         logging.info("No new emails.")
         return
 
+    # Idempotency: the cursor only bounds the query — the seen-ledger is the
+    # authoritative gate, so a re-fetched email that was already handled is
+    # never re-evaluated (the duplicate-eval / wasted-call bug).
+    seen = SeenLedger("email")
+    emails = [e for e in emails if e["id"] not in seen]
+    if not emails:
+        logging.info("All fetched emails already processed.")
+        return
+
     logging.info("Processing %d email(s).", len(emails))
+    failures = load_failures()
 
-    for msg in emails:
-        msg_id = msg["id"]
-        from_addr = msg.get("from", {}).get("emailAddress", {}).get("address", "unknown")
-        subject = msg.get("subject", "(no subject)")
-        received = msg.get("receivedDateTime", "")
+    def triage_one(msg: dict) -> tuple[dict, bool]:
+        return triage_email(msg, access_token, api_key, bot_token)
 
-        logging.info("[email] arrived=%s | \"%s\"", received, subject[:100])
+    result = advance_batch(emails, triage_one, failures, now_iso=_now())
 
-        record = {
-            "msg_id": msg_id,
-            "source": "email",
-            "sender": from_addr,
-            "preview": subject,
-            "arrived_at": received,
-        }
-        email_content = ""
-
-        # --- Flash ---
-        flash_error = None
-        for flash_attempt in range(3):
-            try:
-                decision, reason = flash_header_triage(from_addr, subject, api_key)
-                flash_error = None
-                break
-            except Exception as e:
-                flash_error = e
-                if flash_attempt < 2:
-                    logging.warning("[email] flash error (attempt %d/3): %s",
-                                    flash_attempt + 1, e)
-                    time.sleep(2 ** flash_attempt)
-
-        if flash_error:
-            logging.error("[email] flash error after 3 attempts: %s", flash_error)
-            record["flash"] = {"model": FLASH_MODEL, "decision": "error",
-                               "reason": str(flash_error),
-                               "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-            write_audit(record, AUDIT_FILE)
-            # don't advance cursor — retry on next run
-            continue
-
-        record["flash"] = {"model": FLASH_MODEL, "decision": decision, "reason": reason,
-                           "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-        logging.info("[email] flash → %s | %s", decision, reason)
-
-        # --- Pro ---
-        if decision == "read":
-            try:
-                body_text = fetch_body(access_token, msg_id)
-            except Exception as e:
-                logging.error("[email] body fetch error: %s", e)
-                write_audit(record, AUDIT_FILE)
-                continue
-
-            pro_error = None
-            for pro_attempt in range(3):
-                try:
-                    bd, br, bm, bt = pro_body_triage(from_addr, subject, body_text, api_key)
-                    pro_error = None
-                    break
-                except Exception as e:
-                    pro_error = e
-                    if pro_attempt < 2:
-                        logging.warning("[email] pro error (attempt %d/3): %s",
-                                        pro_attempt + 1, e)
-                        time.sleep(2 ** pro_attempt)
-
-            if pro_error:
-                logging.error("[email] pro error after 3 attempts: %s", pro_error)
-                record["pro"] = {"model": PRO_MODEL, "decision": "error",
-                                 "reason": str(pro_error),
-                                 "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                 "tags": {}}
-                write_audit(record, AUDIT_FILE)
-                # don't advance cursor — retry on next run
-                continue
-
-            record["pro"] = {"model": PRO_MODEL, "decision": bd, "reason": br,
-                             "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-                             "tags": bt}
-            logging.info("[email] pro → %s | %s", bd, br)
-
-            if bd == "send" and bm and bot_token:
-                record["pro"]["message"] = bm
-                msg_id_ref = record["msg_id"]
-                try:
-                    origin = f"{subject} · {from_addr}"
-                    tg_msg_id = send_telegram(bot_token, f"{origin}\n\n{bm}")
-                    with REF_MAP_FILE.open("a") as f:
-                        f.write(json.dumps({"tg_msg_id": tg_msg_id,
-                                            "ref": msg_id_ref}) + "\n")
-                    logging.info("[email] sent to Telegram as msg %s", tg_msg_id)
-                except Exception as e:
-                    logging.error("[email] Telegram send error: %s", e)
-
-            email_content = body_text
-
-        record["content"] = email_content or subject
+    for record in result["records"]:
         write_audit(record, AUDIT_FILE)
-        # Advance cursor per-email so transient errors later in the
-        # batch don't cause already-processed emails to be re-fetched.
-        ts = received.replace("Z", "+00:00")
-        dt = datetime.fromisoformat(ts)
-        safe = (dt + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        save_cursor(safe)
+    save_failures(result["failures"])
+    for mid in result["terminal_ids"]:
+        seen.add(mid)
+    seen.save()
+    if result["cursor"]:
+        save_cursor(result["cursor"])
+    report_dead_letters(bot_token, result["deadletters"])
 
     logging.info("Done.")
 

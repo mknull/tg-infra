@@ -7,19 +7,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, FLASH_MODEL, PRO_MODEL, TELEGRAM_CHAT_ID,
-                 load_env, call_deepseek, extract_json, send_telegram, write_audit)
+from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
+                 load_env, call_deepseek, extract_json, deliver, write_audit,
+                 setup_logging, SeenLedger)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%SZ",
-)
-
-STATE_DIR = Path(__file__).resolve().parent / "state"
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
-REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
 
@@ -159,6 +152,7 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str, dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    setup_logging()
     env = load_env()
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
     api_key = env.get("DEEPSEEK_API_KEY", "")
@@ -172,6 +166,7 @@ def main() -> None:
         return
 
     logging.info("Processing %d message(s).", len(files))
+    seen = SeenLedger("telegram")
     for path in files:
         try:
             entry = json.loads(path.read_text())
@@ -201,6 +196,13 @@ def main() -> None:
             "content": content,
             "arrived_at": arrived_at,
         }
+
+        # Idempotency: the poller can re-queue a message (re-fetch at the cursor
+        # boundary); skip anything already brought to a terminal state.
+        if record["msg_id"] in seen:
+            logging.info("[%s/%s] already processed, skipping", channel, message_id)
+            path.unlink(missing_ok=True)
+            continue
 
         # --- Flash ---
         flash_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -238,12 +240,15 @@ def main() -> None:
 
             if pro_decision == "send" and pro_message and bot_token:
                 record["pro"]["message"] = pro_message
+                # origin preserves provenance — which channel/user the job came from
                 origin = f"@{channel} · @{user}"
-                tg_msg_id = send_telegram(bot_token, f"{origin}\n\n{pro_message}")
-                with REF_MAP_FILE.open("a") as f:
-                    f.write(json.dumps({"tg_msg_id": tg_msg_id,
-                                        "ref": record["msg_id"]}) + "\n")
-                logging.info("[%s/%s] sent to Telegram as msg %s", channel, message_id, tg_msg_id)
+                tg_msg_id = deliver("job_match", f"{origin}\n\n{pro_message}",
+                                    ref=record["msg_id"])
+                if tg_msg_id:
+                    logging.info("[%s/%s] delivered to Telegram as msg %s",
+                                 channel, message_id, tg_msg_id)
+                else:
+                    logging.error("[%s/%s] delivery failed", channel, message_id)
         else:
             logging.info("[%s/%s] pro skipped (flash: skip)", channel, message_id)
 
@@ -251,7 +256,9 @@ def main() -> None:
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         msg_id = record["msg_id"]
         path.rename(MESSAGES_DIR / f"{msg_id}.json")
+        seen.add(msg_id)
 
+    seen.save()
     logging.info("Done.")
 
 

@@ -17,6 +17,17 @@ from unittest.mock import patch, MagicMock
 _PROJECT = Path(__file__).resolve().parent
 
 
+def _criteria_path() -> Path:
+    """Real generated criteria if present, else the committed example fixture.
+
+    Generation needs gitignored source/ documents and a live DeepSeek key, so
+    CI can never produce the real file. The .example is a representative
+    template that exercises the same prompt-assembly path (the API is mocked).
+    """
+    real = _PROJECT / "state" / "it-jobs-criteria.md"
+    return real if real.exists() else _PROJECT / "it-jobs-criteria.md.example"
+
+
 def _load_module(filename: str, alias: str):
     spec = importlib.util.spec_from_file_location(alias, _PROJECT / filename)
     mod = importlib.util.module_from_spec(spec)
@@ -85,18 +96,13 @@ class TestProPromptAssembly(unittest.TestCase):
         cls.triage = _load_module("it-jobs-triage.py", "e2e_pro")
 
     def test_criteria_file_loads(self):
-        """Real criteria file is readable and has expected structure."""
-        path = _PROJECT / "state" / "it-jobs-criteria.md"
-        if not path.exists():
-            self.skipTest("criteria file not generated — run setup first")
-        content = path.read_text()
+        """Criteria file is readable and has expected structure."""
+        content = _criteria_path().read_text()
         self.assertIn("Candidate", content)
         self.assertGreater(len(content), 500)
 
     def test_pro_full_eval_produces_tags(self):
         """Pro eval with real criteria returns structured tags."""
-        if not (_PROJECT / "state" / "it-jobs-criteria.md").exists():
-            self.skipTest("criteria file not generated — run setup first")
         mock_json = json.dumps({
             "decision": "send",
             "reason": "matches ML research profile",
@@ -113,7 +119,8 @@ class TestProPromptAssembly(unittest.TestCase):
                 "salary_range": "€50k-70k",
             },
         })
-        with patch.object(self.triage, "call_deepseek", return_value=mock_json):
+        with patch.object(self.triage, "call_deepseek", return_value=mock_json), \
+             patch.object(self.triage, "CRITERIA_FILE", _criteria_path()):
             decision, reason, message, tags = self.triage.pro_full_eval(
                 "ML Research Scientist. PyTorch. Remote.", "fake-key")
 

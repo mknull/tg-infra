@@ -44,13 +44,16 @@ BLOCKED_NETS = (
     "172.30.", "172.31.", "192.168.",
 )
 
-DOMAIN_CLASSIFY_PROMPT = """You are a URL safety classifier. Given a URL, respond with ONLY a JSON object:
+DOMAIN_CLASSIFY_PROMPT = """You are a URL safety classifier for a research agent
+that gathers PUBLIC information about companies, roles, salaries, and people.
+Given a URL, respond with ONLY a JSON object:
 {{"safe": true/false, "reason": "one sentence"}}
 
-A URL is safe if it points to a company career page, a job board, a
-recruitment agency site, or a professional services firm listing jobs.
-It is unsafe if it points to a file server, an admin panel, an internal
-service, a phishing page, or anything not job-related.
+Safe: any legitimate public web page — company sites and career pages, job
+boards, recruitment agencies, salary/news/review sites, professional or
+academic profiles, encyclopaedias, blogs, and similar public information.
+Unsafe: internal services, admin panels, file servers, login/credential or
+phishing pages, or anything that is not a public, informational web page.
 
 URL to classify: {url}"""
 
@@ -67,12 +70,16 @@ def url_to_host(url: str) -> str:
 
 
 def _classify_domain(url: str, flash_fn=None) -> tuple[bool, str]:
-    """Stage 2: ask Flash to classify an unknown domain."""
+    """Stage 2: ask a light model to classify an unknown domain.
+
+    flash_fn(prompt: str) -> str is injected by the caller (the agent binds
+    the real model + API key). When absent, fail closed.
+    """
     if flash_fn is None:
         return False, "no classifier configured"
     prompt = DOMAIN_CLASSIFY_PROMPT.format(url=url)
     try:
-        raw = flash_fn("deepseek-v4-flash", prompt, "test-key")
+        raw = flash_fn(prompt)
         result = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
         safe = result.get("safe", False)
         reason = result.get("reason", "no reason")
@@ -86,8 +93,9 @@ def validate_fetch_url(url: str, flash_fn=None) -> tuple[bool, str]:
 
     Stage 1 (static): block dangerous schemes, internal IPs.
         Fast-path allow if domain is on the trusted list.
-    Stage 2 (Flash): for unknown domains, ask a light model whether
-        the URL looks like a legitimate job posting site.
+    Stage 2 (classifier): for unknown domains, ask a light model whether
+        the URL looks like a legitimate job posting site. The classifier is
+        injected as flash_fn(prompt: str) -> str (model + key bound by caller).
     """
     url_lower = url.lower().strip()
 

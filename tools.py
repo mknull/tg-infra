@@ -78,8 +78,8 @@ def web_search(query: str, max_results: int = 5) -> str:
 def web_fetch(url: str, flash_fn=None, rate_limiter: RateLimiter | None = None) -> str:
     """Fetch a URL with guardrails: validate, rate-limit, then fetch via Playwright.
 
-    flash_fn(model, prompt, api_key) → str is the stage-2 classifier.
-    rate_limiter tracks per-brief fetch limits.
+    flash_fn(prompt: str) → str is the stage-2 domain classifier (the caller
+    binds the real model + API key). rate_limiter tracks per-brief fetch limits.
     """
     # Guardrails
     ok, reason = validate_fetch_url(url, flash_fn=flash_fn)

@@ -8,6 +8,8 @@ state/messages/
 state/audit/
 state/feedback.jsonl
 state/ref-map.jsonl
+state/email-failures.json
+state/canary-status.json
 state/*-criteria.md
 state/*.log
 workspace/
@@ -20,3 +22,6 @@ source/
 skills/
 state/searxng/
 .coverage
+state/channels.json
+state/poller-heartbeat
+state/seen/

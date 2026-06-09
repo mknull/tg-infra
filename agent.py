@@ -8,7 +8,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import DEEPSEEK_API_URL, PRO_MODEL, STATE_DIR, PROJECT_DIR, USER_NAME, write_audit
+from lib import (DEEPSEEK_API_URL, PRO_MODEL, FLASH_MODEL, STATE_DIR, PROJECT_DIR,
+                 USER_NAME, call_deepseek, write_audit)
 from tools import read_file, web_search, web_fetch, md_to_pdf
 from guardrails import RateLimiter, BRIEFS_DIR
 
@@ -104,7 +105,7 @@ _FALLBACK_PROFILE = "Load profile from source/ directory using read_file."
 
 # --- Agent loop ---
 
-MAX_TURNS = 15
+MAX_TURNS = 20
 
 
 def run_agent(job_text: str, api_key: str,
@@ -122,6 +123,8 @@ def run_agent(job_text: str, api_key: str,
     ]
 
     rl = RateLimiter()
+    # Stage-2 domain classifier: bind the real model + key into a (prompt)->str fn
+    flash_fn = lambda prompt: call_deepseek(FLASH_MODEL, prompt, api_key)
     tool_log: list[dict] = []
     started_at = time.monotonic()
     error = None
@@ -179,7 +182,7 @@ def run_agent(job_text: str, api_key: str,
                             result = web_search(args["query"])
                             tool_ok = "search error" not in result
                         elif name == "web_fetch":
-                            result = web_fetch(args["url"], rate_limiter=rl)
+                            result = web_fetch(args["url"], flash_fn=flash_fn, rate_limiter=rl)
                             tool_ok = "fetch blocked" not in result and "fetch error" not in result
                         else:
                             result = f"unknown tool: {name}"
@@ -207,7 +210,34 @@ def run_agent(job_text: str, api_key: str,
                         "content": result,
                     })
 
-        error = f"exceeded {MAX_TURNS} turns without finishing"
+        # Turns exhausted — rather than hard-failing, force one final write from
+        # the research already gathered (tools disabled so the model must answer).
+        messages.append({
+            "role": "user",
+            "content": ("Stop researching now. Using only what you have already "
+                        "gathered, write the complete brief as specified above. "
+                        "Do not call any tools."),
+        })
+        payload = json.dumps({
+            "model": PRO_MODEL,
+            "messages": messages,
+            "tools": TOOLS,
+            "tool_choice": "none",
+        }).encode()
+        req = urllib.request.Request(
+            DEEPSEEK_API_URL, data=payload,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {api_key}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            body = json.loads(resp.read())
+        brief = body["choices"][0]["message"].get("content") or ""
+        if brief.strip():
+            _write_agent_audit(audit_meta, brief, tool_log, MAX_TURNS,
+                               started_at, error=None)
+            return brief
+        error = f"exceeded {MAX_TURNS} turns and produced no brief"
         raise RuntimeError(error)
 
     except Exception as e:

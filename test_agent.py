@@ -112,6 +112,71 @@ class TestAgentLoop(unittest.TestCase):
             result = run_agent("Test job", "fake-key")
             self.assertIn("Brief", result)
 
+    def test_agent_wires_real_classifier_into_web_fetch(self):
+        """web_fetch receives a (prompt)->str flash_fn bound to FLASH_MODEL+key.
+
+        Asserts the dead stage-2 path is wired: no hardcoded model literal and
+        no 'test-key' — the agent binds the real model and api_key via
+        call_deepseek, and the guardrail only ever sees the prompt.
+        """
+        tool_call = {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "web_fetch",
+                         "arguments": '{"url": "https://www.antal.com/jobs"}'}
+        }
+        responses = [
+            json.dumps({
+                "choices": [{
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [tool_call]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            }).encode(),
+            json.dumps({
+                "choices": [{
+                    "message": {"role": "assistant", "content": "Done brief"},
+                    "finish_reason": "stop"
+                }]
+            }).encode(),
+        ]
+
+        captured = {}
+
+        def fake_web_fetch(url, flash_fn=None, rate_limiter=None):
+            captured["flash_fn"] = flash_fn
+            # Exercise the bound classifier exactly as the guardrail would.
+            captured["classify_result"] = flash_fn(
+                "URL to classify: https://www.antal.com/jobs")
+            return "fetched ok"
+
+        def fake_call_deepseek(model, prompt, api_key):
+            captured["model"] = model
+            captured["api_key"] = api_key
+            captured["prompt"] = prompt
+            return '{"safe": true, "reason": "job board"}'
+
+        from lib import FLASH_MODEL
+        with patch("agent.urllib.request.urlopen") as mock_urlopen, \
+                patch("agent.web_fetch", side_effect=fake_web_fetch), \
+                patch("agent.call_deepseek", side_effect=fake_call_deepseek):
+            mock_cm = MagicMock()
+            mock_cm.read.side_effect = responses
+            mock_urlopen.return_value.__enter__.return_value = mock_cm
+
+            run_agent("Test job", "real-key-123")
+
+        self.assertIsNotNone(captured.get("flash_fn"))
+        # The bound classifier used the real model + key, not test scaffolding.
+        self.assertEqual(captured["model"], FLASH_MODEL)
+        self.assertEqual(captured["api_key"], "real-key-123")
+        self.assertNotEqual(captured["api_key"], "test-key")
+        self.assertIn("antal.com", captured["prompt"])
+        self.assertIn("safe", captured["classify_result"])
+
     def test_max_turns_enforced(self):
         """Agent raises after MAX_TURNS."""
         tool_call = {
@@ -138,6 +203,31 @@ class TestAgentLoop(unittest.TestCase):
 
             with self.assertRaises(RuntimeError):
                 run_agent("Test", "fake-key")
+
+    def test_forced_finish_delivers_brief_after_turn_limit(self):
+        """Past the turn limit the agent forces a final write, not a hard fail."""
+        tc = {"id": "c1", "type": "function",
+              "function": {"name": "web_search", "arguments": '{"query": "x"}'}}
+        tool_resp = json.dumps({"choices": [{"message": {
+            "role": "assistant", "content": None, "tool_calls": [tc]},
+            "finish_reason": "tool_calls"}]}).encode()
+        final_resp = json.dumps({"choices": [{"message": {
+            "role": "assistant", "content": "# Brief\nForced-finish output."},
+            "finish_reason": "stop"}]}).encode()
+        n = {"i": 0}
+
+        def fake_open(*a, **k):
+            n["i"] += 1
+            cm = MagicMock()
+            cm.read.return_value = final_resp if n["i"] > MAX_TURNS else tool_resp
+            ctx = MagicMock()
+            ctx.__enter__.return_value = cm
+            return ctx
+
+        with patch("agent.web_search", return_value="(no results)"), \
+             patch("agent.urllib.request.urlopen", side_effect=fake_open):
+            brief = run_agent("Test", "fake-key")
+        self.assertIn("Forced-finish", brief)
 
 
 if __name__ == "__main__":
