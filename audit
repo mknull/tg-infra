@@ -71,13 +71,32 @@ CYAN = "\033[36m"
 DECISION_COLORS = {
     "send": GREEN, "flag": YELLOW, "read": CYAN, "relevant": YELLOW,
     "skip": DIM, "irrelevant": DIM,
-    "error": RED, "next": DIM,
+    "error": RED, "dead_letter": RED, "next": DIM,
 }
 
 
 def color_decision(d):
     c = DECISION_COLORS.get(d, "")
     return f"{c}{d}{RESET}" if c else d
+
+
+def is_dead_letter(r):
+    """A record sealed WITHOUT a real evaluation — a transient/model error that
+    was retired as terminal instead of retried (DEAD-LETTER, bug-hunt).
+
+    Detected by substance, not just the honest "dead_letter" label, so it also
+    catches the historical records that forged a "skip" at the top level while
+    the error lives only in the flash window — plus a Pro error on a flagged
+    message (evaluated as far as Flash, then sealed un-evaluated by Pro).
+    """
+    flash = r.get("flash", {})
+    if flash.get("decision") == "dead_letter":
+        return True
+    if any(w.get("decision") == "error" for w in flash.get("windows", [])):
+        return True
+    if r.get("pro", {}).get("decision") == "error":
+        return True
+    return False
 
 
 def fmt_ts(ts):
@@ -210,6 +229,9 @@ def print_summary(records, label, feedback=None):
     sends = [r for r in records if "pro" in r and r["pro"]["decision"] == "send"]
     errors = [r for r in records if ("flash" in r and r["flash"]["decision"] == "error")
               or ("pro" in r and r["pro"]["decision"] == "error")]
+    # DEAD-LETTER (bug-hunt): a non-evaluation (transient/model error) sealed as
+    # terminal. Surface it so we know what's dead-lettering, per pipeline.
+    dead = [r for r in records if is_dead_letter(r)]
 
     print(f"{BOLD}{label}{RESET}: {total} records, {unique} unique messages")
     for stage, counts in decisions.items():
@@ -219,6 +241,8 @@ def print_summary(records, label, feedback=None):
         print(f"  {GREEN}sends: {len(sends)}{RESET}")
     if errors:
         print(f"  {RED}errors: {len(errors)}{RESET}")
+    if dead:
+        print(f"  {RED}dead-letters: {len(dead)}{RESET}")
 
     # feedback stats for this source's sends
     if feedback and sends:
@@ -694,6 +718,21 @@ def main():
                 continue
 
             unique, dupes, wasted = count_duplicates(records)
+            # DEAD-LETTER (bug-hunt): surface non-evaluations sealed as terminal.
+            # A flash/pro "dead_letter" decision means the message hit a
+            # transient/model error and was never actually evaluated, yet was
+            # retired and sealed in `seen`. Make it loud so we know what's
+            # dead-lettering; the halt-and-resume fix that stops the loss is next.
+            dead = [r for r in records if is_dead_letter(r)]
+            if dead:
+                print(f"{RED}DEAD-LETTERED{RESET} [{src}]: {len(dead)} message(s) hit a "
+                      f"transient/model error and were sealed un-evaluated:")
+                for r in dead[:5]:
+                    reason = (r.get("flash", {}).get("reason")
+                              or r.get("pro", {}).get("reason") or "?")
+                    print(f"  {RED}✗{RESET} \"{r.get('preview','?')}\" from "
+                          f"{r.get('sender','?')} ({reason})")
+                exit_code = 1
             cascades = build_cascades(records)
             entries = cascades.get(src, [])
             if entries:
@@ -712,9 +751,9 @@ def main():
                     print(f"{RED}BROKEN CASCADE{RESET} [{src}]: {len(weird)} messages "
                           f"with flash:skip→pro")
                     exit_code = 1
-                if not duplicates and not weird:
+                if not duplicates and not weird and not dead:
                     print(f"{GREEN}{src}: clean{RESET}")
-            else:
+            elif not dead:
                 print(f"{DIM}{src}: no data in window{RESET}")
 
         # --- dead-letter health (invariant: zero dead emails) ---
