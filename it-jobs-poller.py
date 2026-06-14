@@ -112,7 +112,10 @@ async def poll() -> None:
         logging.error("TELEGRAM_API_ID must be an integer, got %r", api_id_raw)
         raise SystemExit(1)
 
-    client = TelegramClient(str(SESSION_FILE), api_id, api_hash)
+    # Short-lived cron poll: fail fast on a dropped connection and resume next
+    # run via the cursor (auto_reconnect caused RST storms). Not for long-running use.
+    client = TelegramClient(str(SESSION_FILE), api_id, api_hash,
+                            auto_reconnect=False)
     await client.start()
 
     for channel in load_channels():

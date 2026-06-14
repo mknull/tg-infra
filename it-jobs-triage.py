@@ -88,6 +88,11 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
             i += 3
 
         except Exception as e:
+            # DEAD-LETTER (bug-hunt): returning False here conflates "the API
+            # failed" with "do not pass to Pro". The window keeps decision=error,
+            # but the caller then dead-letters the message (see main()). A
+            # non-evaluation must not be terminal — tracked for the
+            # halt-and-resume fix.
             logging.error("flash window %d error: %s", i + 1, e)
             windows.append({
                 "window_start": i + 1,
@@ -217,9 +222,20 @@ def main() -> None:
         flag, flash_reason, flash_windows = flash_incremental(
             content, desired_roles, acceptable_roles, api_key)
 
+        # DEAD-LETTER (bug-hunt): a transient/model Flash failure (DNS, 503,
+        # timeout) is NOT a disqualification — the message was never evaluated.
+        # The audit caught it via the errored window, but the top-level decision
+        # used to forge a "skip", making a non-evaluation indistinguishable from
+        # a real reject. Label it honestly as a dead letter instead.
+        # NOTE: this is the behaviour we are hunting to ELIMINATE. The message is
+        # still sealed in `seen` and renamed out of the queue below — a
+        # non-evaluation made terminal, which violates seen.py's own "only
+        # terminal ids are recorded" invariant. Honest label first (greppable:
+        # "DEAD-LETTER (bug-hunt)"); halt-and-resume / no-sanctioned-loss fix next.
+        flash_errored = any(w.get("decision") == "error" for w in flash_windows)
         record["flash"] = {
             "model": FLASH_MODEL,
-            "decision": "flag" if flag else "skip",
+            "decision": "dead_letter" if flash_errored else ("flag" if flag else "skip"),
             "reason": flash_reason,
             "at": flash_at,
             "windows": flash_windows,

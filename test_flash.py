@@ -103,8 +103,14 @@ class TestFlashIncremental(unittest.TestCase):
             )
         self.assertTrue(flag)
 
-    def test_error_returns_default_skip(self):
-        """API error → skip (conservative, don't pass bad data to Pro)."""
+    def test_error_does_not_pass_to_pro_but_is_not_a_skip(self):
+        """API error must not escalate to Pro — but it is a DEAD LETTER, not a skip.
+
+        bug-hunt (dead-letterness): a Flash error is a *non-evaluation*. The loop
+        correctly refuses to escalate (flag=False), but main() must label it a
+        dead letter, never forge a "skip" — a non-evaluation made terminal is the
+        behaviour we are hunting to eliminate.
+        """
         with patch.object(triage, "call_deepseek",
                           side_effect=Exception("API timeout")):
             flag, reason, _windows = triage.flash_incremental(
