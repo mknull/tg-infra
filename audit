@@ -81,20 +81,21 @@ def color_decision(d):
 
 
 def is_dead_letter(r):
-    """A record sealed WITHOUT a real evaluation — a transient/model error that
-    was retired as terminal instead of retried (DEAD-LETTER, bug-hunt).
+    """A record sealed WITHOUT a real evaluation — a transient/model error in
+    Flash that was retired as terminal instead of retried (DEAD-LETTER, bug-hunt).
 
     Detected by substance, not just the honest "dead_letter" label, so it also
     catches the historical records that forged a "skip" at the top level while
-    the error lives only in the flash window — plus a Pro error on a flagged
-    message (evaluated as far as Flash, then sealed un-evaluated by Pro).
+    the error lives only in the flash window.
+
+    A Pro error is deliberately NOT counted here: it is recorded honestly as
+    decision "error" and already surfaced under the summary's error count — it
+    is not disguised as a real reject, so it is not a dead letter.
     """
     flash = r.get("flash", {})
     if flash.get("decision") == "dead_letter":
         return True
     if any(w.get("decision") == "error" for w in flash.get("windows", [])):
-        return True
-    if r.get("pro", {}).get("decision") == "error":
         return True
     return False
 
