@@ -35,6 +35,10 @@ CI runs the full suite + `./audit --health` on every push.
 
 All commits are authored by Filippos Panagiotou. DeepSeek and the Claude Code harness are the toolchain — neither claims authorship.
 
+## Branch workflow
+
+One branch per PR. After a PR merges, close out the branch — delete it locally and on the remote, and fast-forward local `master` to `origin/master` — then cut the next branch fresh from the updated `master`. Do not stack new work onto a branch that has already been merged: it makes the "what's actually new" comparison ambiguous and lets local `master` drift behind the remote.
+
 ## State
 
 All runtime state lives in `state/` (project-local). This replaces the deprecated `~/.it-jobs/` directory.
