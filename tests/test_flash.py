@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Tests for unified 3-line incremental flash strategy."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "triage", _PROJECT / "it-jobs-triage.py")
 triage = importlib.util.module_from_spec(_spec)

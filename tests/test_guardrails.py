@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Guardrail tests — simulate adversarial tool calls against the /briefme agent.
 
-Run:  ./jobsmcp/bin/python3 test_guardrails.py
+Run:  ./jobsmcp/bin/python3 tests/test_guardrails.py
 
 These tests simulate an LLM that has been instructed by injected content
 to break out of the sandbox. Every test is a tool call the LLM *would* make
 if it followed malicious instructions. The guardrails say no.
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import unittest
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parent
+PROJECT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = PROJECT / "source"
 BRIEFS_DIR = PROJECT / "workspace" / "briefs"
 STATE_DIR = PROJECT / "state"

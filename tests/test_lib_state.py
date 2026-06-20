@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for lib.state — cursor file I/O plumbing (atomicity, permissions)."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import os
 import stat
 import tempfile

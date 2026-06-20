@@ -6,6 +6,9 @@ records it). The canary's value is exercising the REAL egress at runtime; these
 tests cover its decision logic, not the egress (that is the canary's job, live).
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import json
 import sys
@@ -14,7 +17,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "delivery_canary", _PROJECT / "delivery-canary.py")
 canary = importlib.util.module_from_spec(_spec)

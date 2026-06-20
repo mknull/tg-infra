@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Integration tests — verify end-to-end prompt assembly from source to runtime."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import json
 import os
@@ -8,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 
 
 # Helper to load hyphenated modules

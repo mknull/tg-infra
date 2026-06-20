@@ -252,8 +252,9 @@ UNITS=(
     [bot-commands]="Process Telegram bot commands|*:*:00,30|$PYTHON $PROJECT_DIR/bot-commands.py"
     [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it-jobs-poller.py"
     [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it-jobs-triage.py"
-    [email-ingest]="Fetch and triage Outlook emails|*-*-* */2:45:00|$PROJECT_DIR/email-ingest-wrap"
+    [email-ingest]="Fetch and triage Outlook emails|*-*-* 0/2:45:00|$PROJECT_DIR/email-ingest-wrap"
     [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly-trend.py"
+    [weekly-recovery]="Retry the weekly report until confirmed sent (runs 5 min before email-ingest)|*-*-* 0/2:40:00|$PYTHON $PROJECT_DIR/weekly-recovery.py"
     [feedback-poller]="Poll Outlook for replies to weekly reports|*-*-* *:15,45:00|$PYTHON $PROJECT_DIR/feedback-poller.py"
     [delivery-canary]="Synthetic delivery check (audit --health alerts if it breaks)|*-*-* *:10:00|$PYTHON $PROJECT_DIR/delivery-canary.py"
 )

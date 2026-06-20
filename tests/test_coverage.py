@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Branch coverage: partial branches in lib, weekly-trend, outlook-auth."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import os
 import tempfile
@@ -9,7 +12,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 
 
 # ---------------------------------------------------------------------------

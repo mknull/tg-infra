@@ -7,6 +7,9 @@ permanently-failing email must eventually dead-letter (bounded) and do so
 loudly (recorded + alerted).
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import json
 import sys
@@ -15,7 +18,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "email_triage", _PROJECT / "email-triage.py")
 et = importlib.util.module_from_spec(_spec)

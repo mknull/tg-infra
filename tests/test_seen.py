@@ -6,6 +6,9 @@ an id brought to a terminal state is never seen as new again, while an unsaved
 (mid-retry) id is not yet terminal.
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import tempfile
 import time
 import unittest

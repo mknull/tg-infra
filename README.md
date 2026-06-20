@@ -58,7 +58,7 @@ Channel descriptions live in `state/channels.json` — each entry specifies what
 
 A DeepSeek function-calling agent. The user quotes a job and replies `/briefme` — the agent loads profile files, searches for the company, fetches the listing, and produces a decision-grade brief covering the role, environment, and career-strategic fit. Output is converted to PDF and sent as a Telegram document.
 
-Tools are guardrailed: URL validation with trusted-domain fast-path (unknown domains blocked), filesystem sandbox (`.resolve()` on every path), query injection detection, content sanitisation with closing-tag stripping, and a per-brief rate limiter. 31 adversarial tests verify each layer fails closed.
+Tools are guardrailed: URL validation with trusted-domain fast-path (unknown domains blocked), filesystem sandbox (`.resolve()` on every path), query injection detection, content sanitisation with closing-tag stripping, and a per-brief rate limiter. 34 adversarial tests verify each layer fails closed.
 
 ### Adaptive direction
 
@@ -82,7 +82,7 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ## Project structure
 
 ```
-├── lib/                    Config, API, delivery, direction, auth, audit modules
+├── lib/                    config, api, delivery, direction, auth, audit, graph, log, onboarding, seen, state, weekly_ledger
 ├── guardrails.py           Agent tool access control
 ├── tools.py                Agent tools (read_file, web_search, web_fetch, md_to_pdf)
 ├── agent.py                DeepSeek function-calling loop + system prompt
@@ -95,27 +95,22 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 │
 ├── bot-commands.py         Telegram bot (/briefme, /direction, /start, /status)
 ├── weekly-trend.py         Weekly market report + smell investigation
+├── weekly-recovery.py      Retries the weekly report until confirmed sent
 ├── outlook-auth.py         One-time Outlook OAuth device-code flow
 ├── feedback-poller.py      Polls Outlook for replies to weekly reports
 ├── generate-profile.py     Two-stage profile generation from user documents
 │
+├── setup.sh                Installer (systemd unit generation)
+├── setup-verify.py         Verifies an install is configured + delivering
+├── delivery-canary.py      Synthetic message through the real deliver() path
+│
 ├── state/                  Runtime state (cursors, audit, queue, config, tokens)
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles
+├── channels.json.example   Seed for state/channels.json on a clean checkout
+├── source/                 Profile inputs (interests, skills, tech_stack)
+├── tests/                  242 tests across 21 files (unittest)
 │
-├── test_guardrails.py      31 adversarial guardrail tests
-├── test_tools.py           14 tool tests
-├── test_agent.py           8 agent loop tests
-├── test_deliver.py         11 delivery routing tests
-├── test_flash.py           10 flash strategy tests
-├── test_direction.py       9 CurrentDirection tests
-├── test_weekly.py          7 smell investigation tests
-├── test_feedback.py        4 feedback processing tests
-├── test_integration.py     14 prompt assembly tests
-├── test_e2e.py             12 end-to-end integration tests
-├── test_setup.py           13 setup simulation + auth pipeline tests
-├── test_coverage.py        18 branch coverage tests
-│
-├── .github/workflows/ci.yml  CI: run 159 tests + audit health check
+├── .github/workflows/ci.yml  CI: run 242 tests + audit health check
 └── requirements.txt        telethon, markdown, weasyprint, playwright
 ```
 

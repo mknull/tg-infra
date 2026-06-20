@@ -8,6 +8,9 @@ load_env in favour of lib.config.load_env: a reference copy of the poller's
 can silently change poller behaviour.
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import logging
 import tempfile
 import unittest

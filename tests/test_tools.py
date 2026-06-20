@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Tests for /briefme agent tools.
 
-Run:  ./jobsmcp/bin/python3 test_tools.py
+Run:  ./jobsmcp/bin/python3 tests/test_tools.py
 """
+
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import unittest
 from pathlib import Path
@@ -10,7 +13,7 @@ from pathlib import Path
 from guardrails import RateLimiter, BRIEFS_DIR
 from tools import read_file, truncate, web_search, web_fetch, md_to_pdf
 
-PROJECT = Path(__file__).resolve().parent
+PROJECT = Path(__file__).resolve().parents[1]
 
 
 class TestReadFile(unittest.TestCase):

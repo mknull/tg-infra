@@ -5,15 +5,15 @@ import json
 import logging
 import sys
 from collections import Counter
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL,
-                 load_env, call_deepseek, write_audit, send_email,
-                 ensure_valid_token, setup_logging)
+                 load_env, call_deepseek, send_email,
+                 ensure_valid_token, setup_logging,
+                 report_week, load_ledger, update_ledger,
+                 report_in_sent_items)
 
 AUDIT_DIR = STATE_DIR / "audit"
-WEEKLY_AUDIT_FILE = AUDIT_DIR / "weekly.jsonl"
 DRY_RUN = "--dry-run" in sys.argv
 
 
@@ -28,9 +28,13 @@ def load_profile() -> str:
     return "\n\n".join(parts)
 
 
-def load_week_records() -> list[dict]:
-    """Load audit records from the past 7 days that have structured tags."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+def load_week_records(start_iso: str, end_iso: str) -> list[dict]:
+    """Load audit records that arrived within [start_iso, end_iso).
+
+    The window is anchored to the report week (not ``now``), so the scheduled
+    Sunday run and any later recovery run for the same week see the same records
+    and produce the same report.
+    """
     records = []
     for audit_file in (AUDIT_DIR / "telegram.jsonl", AUDIT_DIR / "email.jsonl"):
         if not audit_file.exists():
@@ -40,7 +44,7 @@ def load_week_records() -> list[dict]:
                 if not line.strip():
                     continue
                 r = json.loads(line)
-                if r.get("arrived_at", "") >= cutoff:
+                if start_iso <= r.get("arrived_at", "") < end_iso:
                     records.append(r)
     return records
 
@@ -253,38 +257,21 @@ def build_raw_section(agg: dict, sends: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# main
+# Email composition
 # ---------------------------------------------------------------------------
 
-def main() -> None:
-    setup_logging()
-    env = load_env()
-    api_key = env.get("DEEPSEEK_API_KEY", "")
-    email_to = env.get("OUTLOOK_EMAIL", "")
+def _build_email(week: dict, api_key: str) -> dict:
+    """Compose the report for ``week``.
 
-    if not api_key:
-        logging.error("DEEPSEEK_API_KEY not set")
-        sys.exit(1)
-
-    records = load_week_records()
+    Returns a dict with ``records``/``agg``/``sends`` always present and either
+    ``empty: True`` (nothing tagged in the window) or ``empty: False`` plus
+    ``subject``/``body``/``attachments``.
+    """
+    records = load_week_records(week["start_iso"], week["end_iso"])
     tagged, sends = extract_tagged(records)
     agg = aggregate(tagged)
-    week_end = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    week_start = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-
     if agg["total_tagged"] == 0:
-        logging.info("no tagged records in the past 7 days — nothing to report")
-        write_audit({
-            "report_at": datetime.now(timezone.utc).isoformat(),
-            "period_start": week_start,
-            "period_end": week_end,
-            "total_records": len(records),
-            "tagged_count": 0,
-            "send_count": 0,
-            "success": True,
-            "note": "no tagged records in window",
-        }, WEEKLY_AUDIT_FILE)
-        return
+        return {"records": records, "agg": agg, "sends": sends, "empty": True}
 
     profile = load_profile()
     if not profile:
@@ -309,11 +296,9 @@ def main() -> None:
     smell_text = _build_smell_section(tagged, sends, records,
                                        profile, direction, api_key)
 
-    # Compose email body
-    subject = f"Weekly Job Market Trend Report ({week_start} – {week_end})"
     body_parts = [
-        f"Weekly Job Market Intelligence",
-        f"Period: {week_start} to {week_end}",
+        "Weekly Job Market Intelligence",
+        f"Period: {week['start']} to {week['end']}",
         f"Total postings triaged: {len(records)}",
         f"Postings with structured tags: {agg['total_tagged']}",
         f"Matches delivered to Telegram: {len(sends)}",
@@ -333,45 +318,115 @@ def main() -> None:
 
     body_parts.append(build_raw_section(agg, sends))
     body_parts.append(_FEEDBACK_PROMPT)
-    body = "\n".join(body_parts)
-    attachments = _get_direction_attachments()
 
-    if DRY_RUN:
-        print(f"Subject: {subject}")
-        print("---")
-        print(body)
-        print("---")
-        print(f"(dry run — not sent. {len(records)} records, {agg['total_tagged']} tagged)")
-        return
+    return {
+        "records": records, "agg": agg, "sends": sends, "empty": False,
+        "subject": week["subject"], "body": "\n".join(body_parts),
+        "attachments": _get_direction_attachments(),
+    }
 
+
+# ---------------------------------------------------------------------------
+# Idempotent send — the single path shared by the Sunday run and recovery
+# ---------------------------------------------------------------------------
+
+def ensure_week_report(env: dict, now=None) -> str:
+    """Ensure the report for the current week is sent exactly once.
+
+    Returns the resulting ledger status: ``sent``, ``empty``, ``unknown``.
+    Idempotent and fail-closed — a send happens only after Tier-1 (ledger) and
+    Tier-2 (Graph Sent Items) both confirm it was not already sent. Any
+    uncertainty is recorded as ``unknown`` (with a reason) and defers.
+    """
+    week = report_week(now)
+    week_key = week["week_key"]
+    period = [week["start"], week["end"]]
+
+    led = load_ledger(week_key)
+    if led and led.get("status") in ("sent", "empty", "missed"):
+        logging.info("week %s already terminal (%s) — nothing to do",
+                     week_key, led["status"])
+        return led["status"]
+
+    api_key = env.get("DEEPSEEK_API_KEY", "")
+    email_to = env.get("OUTLOOK_EMAIL", "")
+    if not api_key:
+        logging.error("DEEPSEEK_API_KEY not set")
+        update_ledger(week_key, status="unknown", period=period, reason="no_api_key")
+        return "unknown"
     if not email_to:
-        logging.error("OUTLOOK_EMAIL not set in .env — cannot send report")
-        sys.exit(1)
+        logging.error("OUTLOOK_EMAIL not set — cannot send report")
+        update_ledger(week_key, status="unknown", period=period, reason="no_recipient")
+        return "unknown"
 
+    # A valid token is needed for both the Sent-Items check and the send.
+    # A refresh failure (e.g. network down) is uncertainty → fail closed.
     try:
         token = ensure_valid_token(env)
-        send_email(token, email_to, subject, body,
-                   attachments=attachments)
-        logging.info("weekly report sent to %s", email_to)
-        success = True
-        error = None
     except Exception as e:
-        logging.error("failed to send weekly report: %s", e)
-        success = False
-        error = str(e)
+        logging.error("token unavailable: %s", e)
+        update_ledger(week_key, status="unknown", period=period, reason=f"token: {e}")
+        return "unknown"
 
-    write_audit({
-        "report_at": datetime.now(timezone.utc).isoformat(),
-        "period_start": week_start,
-        "period_end": week_end,
-        "total_records": len(records),
-        "tagged_count": agg["total_tagged"],
-        "send_count": len(sends),
-        "success": success,
-        "error": error,
-    }, WEEKLY_AUDIT_FILE)
+    # Tier 2: authoritative dedup against Sent Items before composing anything.
+    seen = report_in_sent_items(token, week["subject"], week["sent_floor"])
+    if seen is True:
+        led = update_ledger(week_key, status="sent", period=period)
+        logging.info("week %s already in Sent Items — marked sent (recovered=%s)",
+                     week_key, led["recovered"])
+        return "sent"
+    if seen is None:
+        logging.warning("week %s: Sent Items unreachable — deferring (fail closed)",
+                        week_key)
+        update_ledger(week_key, status="unknown", period=period,
+                      reason="sent_items_unreachable")
+        return "unknown"
 
-    if not success:
+    # seen is False → confirmed not sent → compose and send.
+    email = _build_email(week, api_key)
+    if email["empty"]:
+        logging.info("week %s: no tagged records — nothing to report", week_key)
+        update_ledger(week_key, status="empty", period=period, reason="no_tagged_records")
+        return "empty"
+
+    try:
+        send_email(token, email_to, email["subject"], email["body"],
+                   attachments=email["attachments"])
+    except Exception as e:
+        logging.error("week %s: send failed: %s", week_key, e)
+        update_ledger(week_key, status="unknown", period=period, reason=f"send: {e}")
+        return "unknown"
+
+    led = update_ledger(week_key, status="sent", period=period)
+    logging.info("week %s report sent to %s (attempt %d, recovered=%s)",
+                 week_key, email_to, led["attempts"], led["recovered"])
+    return "sent"
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    setup_logging()
+    env = load_env()
+
+    if DRY_RUN:
+        week = report_week()
+        email = _build_email(week, env.get("DEEPSEEK_API_KEY", ""))
+        print(f"Subject: {week['subject']}")
+        print("---")
+        if email["empty"]:
+            print(f"(no tagged records in window {week['start']}..{week['end']})")
+        else:
+            print(email["body"])
+        print("---")
+        print(f"(dry run — not sent. week {week['week_key']}, "
+              f"{len(email['records'])} records, {email['agg']['total_tagged']} tagged)")
+        return
+
+    status = ensure_week_report(env)
+    if status == "unknown":
         sys.exit(1)
 
 
