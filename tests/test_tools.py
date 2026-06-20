@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Tests for /briefme agent tools.
 
-Run:  ./jobsmcp/bin/python3 test_tools.py
+Run:  ./jobsmcp/bin/python3 tests/test_tools.py
 """
 
 import os, sys

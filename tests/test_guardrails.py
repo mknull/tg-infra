@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Guardrail tests — simulate adversarial tool calls against the /briefme agent.
 
-Run:  ./jobsmcp/bin/python3 test_guardrails.py
+Run:  ./jobsmcp/bin/python3 tests/test_guardrails.py
 
 These tests simulate an LLM that has been instructed by injected content
 to break out of the sandbox. Every test is a tool call the LLM *would* make
