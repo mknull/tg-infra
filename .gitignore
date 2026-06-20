@@ -25,3 +25,4 @@ state/searxng/
 state/channels.json
 state/poller-heartbeat
 state/seen/
+state/weekly/

@@ -14,7 +14,8 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 - `it-jobs-triage.py` — Two-model triage: incremental 3-line Flash → Pro full eval → delivery
 - `email-triage.py` — Outlook Graph API → Flash header filter → Pro body eval → delivery
 - `bot-commands.py` — Telegram bot: /briefme, /direction, /start, /status, /help
-- `weekly-trend.py` — Weekly market trend report + smell investigation
+- `weekly-trend.py` — Weekly market trend report + smell investigation (idempotent: `ensure_week_report`)
+- `weekly-recovery.py` — Retries the weekly report every 2h until confirmed sent (fail-closed, ledger-backed)
 - `outlook-auth.py` — One-time Outlook device-code OAuth flow
 - `feedback-poller.py` — Polls Outlook for replies to weekly reports
 - `generate-profile.py` — Two-stage profile generation from user documents
@@ -23,7 +24,7 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 
 ## Tests
 
-159 tests across 13 files. Run with:
+242 tests across 21 files. Run with:
 ```
 jobsmcp/bin/python3 -m unittest discover -s . -p 'test_*.py'
 ```

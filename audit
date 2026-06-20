@@ -820,31 +820,62 @@ def main():
         else:
             print(f"{DIM}canary: never run{RESET}")
 
-        # --- weekly report health ---
-        weekly_file = os.path.join(AUDIT_DIR, "weekly.jsonl")
-        if os.path.exists(weekly_file):
-            weekly_records = []
-            with open(weekly_file) as f:
-                for line in f:
-                    if line.strip():
-                        r = json.loads(line)
-                        if r.get("report_at", "") >= since:
-                            weekly_records.append(r)
-            if weekly_records:
-                failures = [r for r in weekly_records if not r.get("success")]
-                if failures:
-                    print(f"{RED}WEEKLY FAILURES{RESET}: {len(failures)} reports failed")
-                    exit_code = 1
+        # --- weekly report health (ledger-backed) ---
+        # The per-week ledger (state/weekly/<sunday>.json) is the source of
+        # truth. `missed`, or a `pending`/`unknown` week whose recovery window
+        # (Sun..Wed) has closed, is a loud alarm. A pending week still inside
+        # its window is informational — recovery is mid-retry.
+        WEEKLY_RECOVERY_WINDOW_DAYS = 3
+        weekly_dir = os.path.join(STATE, "weekly")
+        ledgers = []
+        if os.path.isdir(weekly_dir):
+            for fn in os.listdir(weekly_dir):
+                if not fn.endswith(".json"):
+                    continue
+                try:
+                    with open(os.path.join(weekly_dir, fn)) as f:
+                        ledgers.append(json.load(f))
+                except (json.JSONDecodeError, OSError):
+                    continue
+        if ledgers:
+            ledgers.sort(key=lambda r: r.get("week_key", ""), reverse=True)
+            today = datetime.now(timezone.utc).date()
+            alarm = False
+            for led in ledgers:
+                wk = led.get("week_key", "?")
+                status = led.get("status", "?")
+                attempts = led.get("attempts", 0)
+                reason = led.get("last_reason", "?")
+                if status in ("sent", "empty"):
+                    continue
+                try:
+                    age = (today - datetime.strptime(wk, "%Y-%m-%d").date()).days
+                except ValueError:
+                    age = 0
+                if status == "missed":
+                    print(f"{RED}WEEKLY MISSED{RESET}: week {wk} never confirmed sent "
+                          f"({attempts} attempts, last: {reason})")
+                    alarm = True
+                elif age <= WEEKLY_RECOVERY_WINDOW_DAYS:
+                    print(f"{YELLOW}weekly: week {wk} pending{RESET} "
+                          f"({attempts} attempts, last: {reason}) — in recovery window")
                 else:
-                    latest = weekly_records[-1]
-                    print(f"{GREEN}weekly: clean{RESET} "
-                          f"(last report {latest.get('report_at','?')[:10]}, "
-                          f"{latest.get('tagged_count',0)} tagged, "
-                          f"{latest.get('send_count',0)} sends)")
-            else:
-                print(f"{DIM}weekly: no data in window{RESET}")
+                    print(f"{RED}WEEKLY OVERDUE{RESET}: week {wk} unresolved past "
+                          f"recovery window ({attempts} attempts, last: {reason})")
+                    alarm = True
+            if alarm:
+                exit_code = 1
+            sent = [l for l in ledgers if l.get("status") == "sent"]
+            if sent:
+                latest = sent[0]
+                rec = " (recovered)" if latest.get("recovered") else ""
+                print(f"{GREEN}weekly: last sent{RESET} week "
+                      f"{latest.get('week_key','?')}{rec}, "
+                      f"sent_at {str(latest.get('sent_at','?'))[:16]}")
+            elif not alarm:
+                print(f"{GREEN}weekly: clean{RESET} (no pending or missed weeks)")
         else:
-            print(f"{DIM}weekly: no file{RESET}")
+            print(f"{DIM}weekly: no ledger yet{RESET}")
 
         sys.exit(exit_code)
 
