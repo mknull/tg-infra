@@ -24,9 +24,9 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 
 ## Tests
 
-242 tests across 21 files. Run with:
+242 tests across 21 files in `tests/`. Run with:
 ```
-jobsmcp/bin/python3 -m unittest discover -s . -p 'test_*.py'
+jobsmcp/bin/python3 -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
 CI runs the full suite + `./audit --health` on every push.

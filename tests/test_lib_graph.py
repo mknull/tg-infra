@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for lib.graph — shared Microsoft Graph client (auth header, URL, JSON)."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import unittest
 from unittest.mock import patch, MagicMock

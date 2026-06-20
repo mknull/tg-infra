@@ -2,6 +2,9 @@
 """Tests for the weekly-report recovery cycle: stable week anchoring, the
 fail-closed ledger, and idempotent send."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import sys
 import tempfile
@@ -15,7 +18,7 @@ from lib import weekly_ledger as wl
 # Load under a unique module name so we don't clobber sys.modules["weekly_trend"],
 # which test_weekly.py's string-based @patch("weekly_trend.call_deepseek") resolves
 # against. We patch via patch.object(wt, ...), so the registered name is irrelevant.
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "weekly_trend_recovery", _PROJECT / "weekly-trend.py")
 wt = importlib.util.module_from_spec(_spec)

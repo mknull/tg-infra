@@ -5,6 +5,9 @@ Notably the Inbox guard: monitoring the whole Inbox would triage every email
 the user gets, so it must be refused unless explicitly confirmed.
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import unittest
 
 from lib import (resolve_monitored_folder, missing_required,

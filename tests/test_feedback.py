@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Tests for feedback processing — /direction command and email reply polling."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 
 
 class TestDirectionCommand(unittest.TestCase):

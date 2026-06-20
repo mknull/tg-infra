@@ -108,28 +108,7 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles
 ├── channels.json.example   Seed for state/channels.json on a clean checkout
 ├── source/                 Profile inputs (interests, skills, tech_stack)
-│
-├── test_guardrails.py      34 adversarial guardrail tests
-├── test_tools.py           14 tool tests
-├── test_agent.py           10 agent loop tests
-├── test_deliver.py         14 delivery routing tests
-├── test_flash.py           10 flash strategy tests
-├── test_direction.py       9 CurrentDirection tests
-├── test_weekly.py          7 smell investigation tests
-├── test_weekly_recovery.py 18 weekly recovery ledger tests
-├── test_feedback.py        4 feedback processing tests
-├── test_integration.py     14 prompt assembly tests
-├── test_e2e.py             12 end-to-end integration tests
-├── test_setup.py           13 setup simulation + auth pipeline tests
-├── test_system_setup.py    8 setup.sh simulation tests
-├── test_onboarding.py      11 setup-verify onboarding tests
-├── test_canary.py          4 delivery canary tests
-├── test_email_triage.py    12 email pipeline triage tests
-├── test_seen.py            6 email dedup seen-set tests
-├── test_lib_graph.py       7 Microsoft Graph client tests
-├── test_lib_state.py       12 state directory primitive tests
-├── test_lib_infra.py       5 lib infrastructure tests
-├── test_coverage.py        18 branch coverage tests
+├── tests/                  242 tests across 21 files (unittest)
 │
 ├── .github/workflows/ci.yml  CI: run 242 tests + audit health check
 └── requirements.txt        telethon, markdown, weasyprint, playwright

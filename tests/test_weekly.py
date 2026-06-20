@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Tests for weekly-trend.py — smell investigation and report structure."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import importlib.util
 import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_PROJECT = Path(__file__).resolve().parent
+_PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
     "weekly_trend", _PROJECT / "weekly-trend.py")
 wt = importlib.util.module_from_spec(_spec)

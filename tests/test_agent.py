@@ -4,6 +4,9 @@
 Run:  ./jobsmcp/bin/python3 test_agent.py
 """
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import unittest
 from unittest.mock import patch, MagicMock

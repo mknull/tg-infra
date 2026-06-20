@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Tests for unified delivery abstraction — deliver() routing and backends."""
 
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-PROJECT = Path(__file__).resolve().parent
+PROJECT = Path(__file__).resolve().parents[1]
 STATE_DIR = PROJECT / "state"
 DELIVERY_CONFIG = STATE_DIR / "delivery.json"
 
