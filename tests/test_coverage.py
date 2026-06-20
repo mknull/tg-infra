@@ -120,7 +120,7 @@ class TestDeliveryPartialBranches(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# weekly-trend.py — aggregation, extraction, main() flow
+# weekly_trend.py — aggregation, extraction, main() flow
 # ---------------------------------------------------------------------------
 
 WEEKLY_TAG = {
@@ -162,7 +162,7 @@ class TestWeeklyBranches(unittest.TestCase):
     def setUpClass(cls):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "wt", _PROJECT / "weekly-trend.py")
+            "wt", _PROJECT / "weekly_trend.py")
         cls.wt = importlib.util.module_from_spec(spec)
         import sys
         sys.modules["wt_test"] = cls.wt
@@ -246,7 +246,7 @@ class TestWeeklyBranches(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# outlook-auth.py — device code flow
+# outlook_auth.py — device code flow
 # ---------------------------------------------------------------------------
 
 class TestOutlookAuth(unittest.TestCase):
@@ -255,7 +255,7 @@ class TestOutlookAuth(unittest.TestCase):
     def setUpClass(cls):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "oa", _PROJECT / "outlook-auth.py")
+            "oa", _PROJECT / "outlook_auth.py")
         cls.oa = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.oa)
 

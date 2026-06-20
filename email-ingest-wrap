@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # --- triage ---
-./jobsmcp/bin/python3 email-triage.py
+./jobsmcp/bin/python3 email_triage.py
 
 # --- audit health check (1-day window) ---
 if ! ./audit --health --days 1 > /dev/null 2>&1; then

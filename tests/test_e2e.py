@@ -43,7 +43,7 @@ class TestChannelsToFlashPrompt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "e2e_flash")
+        cls.triage = _load_module("it_jobs_triage.py", "e2e_flash")
 
     def test_real_channels_json_parses(self):
         """Every channel in the real channels.json can produce a flash prompt."""
@@ -96,7 +96,7 @@ class TestProPromptAssembly(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "e2e_pro")
+        cls.triage = _load_module("it_jobs_triage.py", "e2e_pro")
 
     def test_criteria_file_loads(self):
         """Criteria file is readable and has expected structure."""
@@ -237,11 +237,11 @@ class TestAuditHealthWithSyntheticData(unittest.TestCase):
 
 
 class TestGenerateProfilePromptStructure(unittest.TestCase):
-    """Verify generate-profile.py prompts are well-formed."""
+    """Verify generate_profile.py prompts are well-formed."""
 
     @classmethod
     def setUpClass(cls):
-        cls.gen = _load_module("generate-profile.py", "e2e_profile")
+        cls.gen = _load_module("generate_profile.py", "e2e_profile")
 
     def test_extract_prompt_is_well_formed(self):
         """_EXTRACT_PROMPT has the required structure."""

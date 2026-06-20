@@ -20,7 +20,7 @@ from lib import weekly_ledger as wl
 # against. We patch via patch.object(wt, ...), so the registered name is irrelevant.
 _PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
-    "weekly_trend_recovery", _PROJECT / "weekly-trend.py")
+    "weekly_trend_recovery", _PROJECT / "weekly_trend.py")
 wt = importlib.util.module_from_spec(_spec)
 sys.modules["weekly_trend_recovery"] = wt
 _spec.loader.exec_module(wt)

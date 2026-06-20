@@ -118,7 +118,7 @@ def cmd_verify(env: dict) -> int:
     if cmd_getme(env):
         return 1
     if not env.get("TELEGRAM_CHAT_ID", "").strip():
-        print("TELEGRAM_CHAT_ID not set — run: setup-verify.py pair")
+        print("TELEGRAM_CHAT_ID not set — run: setup_verify.py pair")
         return 1
     print("sending a canary message to confirm delivery...")
     mid = deliver("canary", "\U0001f424 setup verify — if you can read this, delivery works.")
@@ -155,7 +155,7 @@ def main() -> None:
     cmds = {"require": cmd_require, "getme": cmd_getme, "pair": cmd_pair,
             "verify": cmd_verify, "status": cmd_status}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
-        print("usage: setup-verify.py {" + "|".join(cmds) + "}")
+        print("usage: setup_verify.py {" + "|".join(cmds) + "}")
         sys.exit(2)
     sys.exit(cmds[sys.argv[1]](load_env()))
 

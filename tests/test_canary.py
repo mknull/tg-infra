@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 _PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
-    "delivery_canary", _PROJECT / "delivery-canary.py")
+    "delivery_canary", _PROJECT / "delivery_canary.py")
 canary = importlib.util.module_from_spec(_spec)
 sys.modules["delivery_canary"] = canary
 _spec.loader.exec_module(canary)

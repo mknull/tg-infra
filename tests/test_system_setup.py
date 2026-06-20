@@ -30,11 +30,11 @@ class TestSetupScript(unittest.TestCase):
 
         # Copy project files
         for name in ("setup.sh", "requirements.txt", ".gitignore",
-                     "email-ingest-wrap", "outlook-auth.py",
-                     "generate-profile.py",
-                     "bot-commands.py", "it-jobs-poller.py",
-                     "it-jobs-triage.py", "email-triage.py",
-                     "weekly-trend.py", "feedback-poller.py",
+                     "email-ingest-wrap", "outlook_auth.py",
+                     "generate_profile.py",
+                     "bot_commands.py", "it_jobs_poller.py",
+                     "it_jobs_triage.py", "email_triage.py",
+                     "weekly_trend.py", "feedback_poller.py",
                      "agent.py", "tools.py", "guardrails.py",
                      "audit"):
             src = _PROJECT / name
@@ -120,10 +120,10 @@ class TestSetupScript(unittest.TestCase):
                             f"missing {name}.timer")
 
     def test_email_ingest_service_uses_wrapper(self):
-        """email-ingest.service runs the shell wrapper, not email-triage.py."""
+        """email-ingest.service runs the shell wrapper, not email_triage.py."""
         svc = (self.systemd / "email-ingest.service").read_text()
         self.assertIn("email-ingest-wrap", svc)
-        self.assertNotIn("email-triage.py", svc)
+        self.assertNotIn("email_triage.py", svc)
 
     def test_systemd_units_have_no_hardcoded_paths(self):
         """Systemd units use PROJECT_DIR, not /home/filippos."""

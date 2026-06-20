@@ -88,21 +88,21 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 ├── agent.py                DeepSeek function-calling loop + system prompt
 ├── audit                   CLI audit tool
 │
-├── it-jobs-poller.py       Telethon poller (Telegram groups → queue)
-├── it-jobs-triage.py       Queue → incremental Flash → Pro → delivery
-├── email-triage.py         Outlook Graph API → Flash → Pro → delivery
+├── it_jobs_poller.py       Telethon poller (Telegram groups → queue)
+├── it_jobs_triage.py       Queue → incremental Flash → Pro → delivery
+├── email_triage.py         Outlook Graph API → Flash → Pro → delivery
 ├── email-ingest-wrap       Email ingest + audit health check + Telegram alert
 │
-├── bot-commands.py         Telegram bot (/briefme, /direction, /start, /status)
-├── weekly-trend.py         Weekly market report + smell investigation
-├── weekly-recovery.py      Retries the weekly report until confirmed sent
-├── outlook-auth.py         One-time Outlook OAuth device-code flow
-├── feedback-poller.py      Polls Outlook for replies to weekly reports
-├── generate-profile.py     Two-stage profile generation from user documents
+├── bot_commands.py         Telegram bot (/briefme, /direction, /start, /status)
+├── weekly_trend.py         Weekly market report + smell investigation
+├── weekly_recovery.py      Retries the weekly report until confirmed sent
+├── outlook_auth.py         One-time Outlook OAuth device-code flow
+├── feedback_poller.py      Polls Outlook for replies to weekly reports
+├── generate_profile.py     Two-stage profile generation from user documents
 │
 ├── setup.sh                Installer (systemd unit generation)
-├── setup-verify.py         Verifies an install is configured + delivering
-├── delivery-canary.py      Synthetic message through the real deliver() path
+├── setup_verify.py         Verifies an install is configured + delivering
+├── delivery_canary.py      Synthetic message through the real deliver() path
 │
 ├── state/                  Runtime state (cursors, audit, queue, config, tokens)
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles

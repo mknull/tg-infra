@@ -146,7 +146,7 @@ class TestDirectionInTriagePrompt(unittest.TestCase):
 
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "triage", PROJECT / "it-jobs-triage.py")
+            "triage", PROJECT / "it_jobs_triage.py")
         triage = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(triage)
 

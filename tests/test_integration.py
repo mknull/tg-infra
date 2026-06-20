@@ -32,7 +32,7 @@ class TestSourceToFlashPrompt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "triage_int")
+        cls.triage = _load_module("it_jobs_triage.py", "triage_int")
 
     def test_channel_desired_roles_appear_in_assembled_prompt(self):
         """desired_roles from channels.json surface in the flash prompt."""
@@ -68,7 +68,7 @@ class TestSourceToProPrompt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "triage_pro")
+        cls.triage = _load_module("it_jobs_triage.py", "triage_pro")
 
     def test_pro_prompt_includes_criteria_file_content(self):
         """The Pro evaluation prompt includes the criteria file content."""
@@ -101,7 +101,7 @@ class TestDirectionDeltaInFlashPrompt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "triage_delta")
+        cls.triage = _load_module("it_jobs_triage.py", "triage_delta")
 
     def setUp(self):
         self.small_file = _PROJECT / "state" / "current-direction-small.md"
@@ -160,7 +160,7 @@ class TestDirectionDeltaInProPrompt(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.triage = _load_module("it-jobs-triage.py", "triage_pro_delta")
+        cls.triage = _load_module("it_jobs_triage.py", "triage_pro_delta")
 
     def setUp(self):
         self.full_file = _PROJECT / "state" / "current-direction.md"
@@ -242,7 +242,7 @@ class TestGenerationToPrompts(unittest.TestCase):
         with open(_PROJECT / "state" / "channels.json") as f:
             channels = json.loads(f.read())["channels"]
 
-        triage = _load_module("it-jobs-triage.py", "triage_gen")
+        triage = _load_module("it_jobs_triage.py", "triage_gen")
         for ch in channels:
             prompt = triage.FLASH_PROMPT.format(
                 desired_roles=ch["desired_roles"],

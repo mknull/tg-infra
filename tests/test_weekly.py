@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for weekly-trend.py — smell investigation and report structure."""
+"""Tests for weekly_trend.py — smell investigation and report structure."""
 
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 _PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
-    "weekly_trend", _PROJECT / "weekly-trend.py")
+    "weekly_trend", _PROJECT / "weekly_trend.py")
 wt = importlib.util.module_from_spec(_spec)
 sys.modules["weekly_trend"] = wt
 _spec.loader.exec_module(wt)
