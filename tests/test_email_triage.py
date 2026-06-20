@@ -20,7 +20,7 @@ from unittest.mock import patch
 
 _PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
-    "email_triage", _PROJECT / "email-triage.py")
+    "email_triage", _PROJECT / "email_triage.py")
 et = importlib.util.module_from_spec(_spec)
 sys.modules["email_triage"] = et
 _spec.loader.exec_module(et)

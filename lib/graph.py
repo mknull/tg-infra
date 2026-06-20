@@ -1,8 +1,8 @@
 """Microsoft Graph API client — shared auth header and error handling.
 
-GET and POST against Graph used to live in three places (``email-triage.py``'s
+GET and POST against Graph used to live in three places (``email_triage.py``'s
 ``graph_get``, ``lib/delivery.py``'s ``graph_post``, and raw inline requests in
-``feedback-poller.py``), each re-deriving the bearer header and the
+``feedback_poller.py``), each re-deriving the bearer header and the
 ``GRAPH_BASE + path`` URL. This consolidates the *mechanism* — header, URL
 assembly, JSON (de)serialisation, empty-body handling — in one place. Callers
 still own which endpoints they hit and what they do with the result.

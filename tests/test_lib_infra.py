@@ -20,7 +20,7 @@ from lib import setup_logging, load_env
 from lib.log import LOG_FORMAT, LOG_DATEFMT
 
 
-# Verbatim copy of the parser that used to live in it-jobs-poller.py, kept here
+# Verbatim copy of the parser that used to live in it_jobs_poller.py, kept here
 # purely as the equivalence oracle. Do NOT "improve" it — it must mirror the
 # pre-fold behaviour exactly.
 def _legacy_poller_load_env(env_file: Path) -> dict:

@@ -144,7 +144,7 @@ class _BaseSetupTest(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.gen = _load_module("generate-profile.py", f"gen_{cls.__name__}")
+        cls.gen = _load_module("generate_profile.py", f"gen_{cls.__name__}")
         cls.tmpdir = Path(tempfile.mkdtemp(prefix="setup_test_"))
         cls.docsdir = cls.tmpdir / "docs"
         cls.docsdir.mkdir()

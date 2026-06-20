@@ -70,13 +70,13 @@ def main() -> None:
         elif data.get("error") == "authorization_pending":
             continue
         elif data.get("error") == "authorization_declined":
-            print("Authorization was declined. Re-run outlook-auth.py to try again.")
+            print("Authorization was declined. Re-run outlook_auth.py to try again.")
             sys.exit(1)
         else:
             print(f"Unexpected response: {data}")
             sys.exit(1)
 
-    print("Timed out waiting for authorization. Re-run outlook-auth.py when ready.")
+    print("Timed out waiting for authorization. Re-run outlook_auth.py when ready.")
     sys.exit(1)
 
 

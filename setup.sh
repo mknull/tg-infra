@@ -112,7 +112,7 @@ TELEGRAM_BOT_TOKEN=
 # both from https://my.telegram.org/apps
 TELEGRAM_API_ID=
 TELEGRAM_API_HASH=
-# leave blank — set automatically by: ./setup-verify.py pair
+# leave blank — set automatically by: ./setup_verify.py pair
 TELEGRAM_CHAT_ID=
 # from https://platform.deepseek.com
 DEEPSEEK_API_KEY=
@@ -178,7 +178,7 @@ fi
 SOURCE_DIR="$PROJECT_DIR/source"
 if [[ -d "$SOURCE_DIR" ]] && [[ -f "$SOURCE_DIR/interests.txt" ]]; then
     skip "source/ already exists"
-    log "To regenerate: $PYTHON generate-profile.py --docs <dir> --name NAME --force"
+    log "To regenerate: $PYTHON generate_profile.py --docs <dir> --name NAME --force"
 else
     if [[ -n "${DEEPSEEK_KEY:-}" ]]; then
         log ""
@@ -189,14 +189,14 @@ else
         if [[ "$GEN_REPLY" =~ ^[Yy]$ ]]; then
             read -p "Path to documents directory: " -r DOCS_DIR
             read -p "Your full name: " -r USER_NAME
-            "$PYTHON" "$PROJECT_DIR/generate-profile.py" \
+            "$PYTHON" "$PROJECT_DIR/generate_profile.py" \
                 --docs "$DOCS_DIR" --name "$USER_NAME" || log "WARNING: generation failed"
         else
-            log "Skipped. Run later: $PYTHON generate-profile.py --docs <dir> --name NAME"
+            log "Skipped. Run later: $PYTHON generate_profile.py --docs <dir> --name NAME"
         fi
     else
         log "Set DEEPSEEK_API_KEY in .env first, then run:"
-        log "  $PYTHON generate-profile.py --docs <dir> --name NAME"
+        log "  $PYTHON generate_profile.py --docs <dir> --name NAME"
     fi
 fi
 
@@ -214,9 +214,9 @@ else
     log ""
     read -p "Authenticate now? (y/N) " -r AUTH_REPLY
     if [[ "$AUTH_REPLY" =~ ^[Yy]$ ]]; then
-        "$PYTHON" "$PROJECT_DIR/it-jobs-poller.py" || log "WARNING: auth failed — re-run setup.sh"
+        "$PYTHON" "$PROJECT_DIR/it_jobs_poller.py" || log "WARNING: auth failed — re-run setup.sh"
     else
-        log "Run manually: $PYTHON it-jobs-poller.py"
+        log "Run manually: $PYTHON it_jobs_poller.py"
     fi
 fi
 
@@ -227,7 +227,7 @@ step "Outlook authentication"
 TOKEN_FILE="$STATE_DIR/outlook-token.json"
 if [[ -f "$TOKEN_FILE" ]]; then
     skip "outlook-token.json exists"
-    log "To re-auth: $PYTHON outlook-auth.py"
+    log "To re-auth: $PYTHON outlook_auth.py"
 else
     log ""
     log "Outlook email access requires an OAuth token."
@@ -235,9 +235,9 @@ else
     log ""
     read -p "Authenticate Outlook now? (y/N) " -r OAUTH_REPLY
     if [[ "$OAUTH_REPLY" =~ ^[Yy]$ ]]; then
-        "$PYTHON" "$PROJECT_DIR/outlook-auth.py" || log "WARNING: auth failed — re-run setup.sh"
+        "$PYTHON" "$PROJECT_DIR/outlook_auth.py" || log "WARNING: auth failed — re-run setup.sh"
     else
-        log "Run manually: $PYTHON outlook-auth.py"
+        log "Run manually: $PYTHON outlook_auth.py"
     fi
 fi
 
@@ -249,14 +249,14 @@ mkdir -p "$SYSTEMD_DIR"
 declare -A UNITS
 # Each entry: "name" => "description|schedule|exec"
 UNITS=(
-    [bot-commands]="Process Telegram bot commands|*:*:00,30|$PYTHON $PROJECT_DIR/bot-commands.py"
-    [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it-jobs-poller.py"
-    [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it-jobs-triage.py"
+    [bot-commands]="Process Telegram bot commands|*:*:00,30|$PYTHON $PROJECT_DIR/bot_commands.py"
+    [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it_jobs_poller.py"
+    [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it_jobs_triage.py"
     [email-ingest]="Fetch and triage Outlook emails|*-*-* 0/2:45:00|$PROJECT_DIR/email-ingest-wrap"
-    [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly-trend.py"
-    [weekly-recovery]="Retry the weekly report until confirmed sent (runs 5 min before email-ingest)|*-*-* 0/2:40:00|$PYTHON $PROJECT_DIR/weekly-recovery.py"
-    [feedback-poller]="Poll Outlook for replies to weekly reports|*-*-* *:15,45:00|$PYTHON $PROJECT_DIR/feedback-poller.py"
-    [delivery-canary]="Synthetic delivery check (audit --health alerts if it breaks)|*-*-* *:10:00|$PYTHON $PROJECT_DIR/delivery-canary.py"
+    [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly_trend.py"
+    [weekly-recovery]="Retry the weekly report until confirmed sent (runs 5 min before email-ingest)|*-*-* 0/2:40:00|$PYTHON $PROJECT_DIR/weekly_recovery.py"
+    [feedback-poller]="Poll Outlook for replies to weekly reports|*-*-* *:15,45:00|$PYTHON $PROJECT_DIR/feedback_poller.py"
+    [delivery-canary]="Synthetic delivery check (audit --health alerts if it breaks)|*-*-* *:10:00|$PYTHON $PROJECT_DIR/delivery_canary.py"
 )
 
 for name in "${!UNITS[@]}"; do
@@ -311,13 +311,13 @@ if [[ -z "${CHAT_ID:-}" ]]; then
     log "No Telegram chat paired yet."
     read -p "Pair now (you'll send your bot a message)? (y/N) " -r PAIR_REPLY
     if [[ "$PAIR_REPLY" =~ ^[Yy]$ ]]; then
-        "$PYTHON" "$PROJECT_DIR/setup-verify.py" pair \
-            || log "pairing failed — run later: $PYTHON setup-verify.py pair"
+        "$PYTHON" "$PROJECT_DIR/setup_verify.py" pair \
+            || log "pairing failed — run later: $PYTHON setup_verify.py pair"
     fi
 fi
 
 ACTIVATED=false
-if "$PYTHON" "$PROJECT_DIR/setup-verify.py" verify; then
+if "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
     log "verify passed — activating timers"
     for name in "${!UNITS[@]}"; do
         if systemctl --user enable --now "$name.timer" 2>/dev/null; then
@@ -338,21 +338,21 @@ log "========================================"
 if $ACTIVATED; then
     log "Setup complete — the system is LIVE (timers enabled, canary delivering)."
     log "Re-run ./setup.sh any time; it is idempotent."
-    log "Check anytime:  $PYTHON setup-verify.py status"
+    log "Check anytime:  $PYTHON setup_verify.py status"
 else
     log "Setup scaffolded — NOT live yet. Finish these, then re-run ./setup.sh"
     log "(idempotent; it will pair, verify, and activate automatically):"
     log "  1. Fill in $ENV_FILE (leave TELEGRAM_CHAT_ID blank)"
     log "  2. Edit $CHANNELS_FILE with YOUR Telegram channels"
     if [[ ! -f "$SOURCE_DIR/interests.txt" ]]; then
-        log "  3. Generate your profile: $PYTHON generate-profile.py --docs <dir> --name NAME"
+        log "  3. Generate your profile: $PYTHON generate_profile.py --docs <dir> --name NAME"
     fi
     if [[ ! -f "$SESSION_FILE" ]]; then
-        log "  4. Authenticate Telethon: $PYTHON it-jobs-poller.py"
+        log "  4. Authenticate Telethon: $PYTHON it_jobs_poller.py"
     fi
     if [[ ! -f "$TOKEN_FILE" ]]; then
-        log "  5. (email only) Authenticate Outlook: $PYTHON outlook-auth.py"
+        log "  5. (email only) Authenticate Outlook: $PYTHON outlook_auth.py"
     fi
-    log "  Check status anytime: $PYTHON setup-verify.py status"
+    log "  Check status anytime: $PYTHON setup_verify.py status"
 fi
 log "========================================"

@@ -207,7 +207,7 @@ class TestFilesystemGuardrails(unittest.TestCase):
         blocked = [
             PROJECT / "lib.py",
             STATE_DIR / "email-cursor",
-            PROJECT / "email-triage.py",
+            PROJECT / "email_triage.py",
             PROJECT / "README.md",
             PROJECT / ".env",
             Path("/etc/cron.d/backdoor"),

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 _PROJECT = Path(__file__).resolve().parents[1]
 _spec = importlib.util.spec_from_file_location(
-    "triage", _PROJECT / "it-jobs-triage.py")
+    "triage", _PROJECT / "it_jobs_triage.py")
 triage = importlib.util.module_from_spec(_spec)
 sys.modules["triage"] = triage
 _spec.loader.exec_module(triage)
