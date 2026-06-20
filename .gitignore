@@ -1,28 +1,24 @@
-state/.env
-state/outlook-token.json
-state/it-jobs-session.session
-state/bot-cursor
-state/*-cursor
-state/message_queue/
-state/messages/
-state/audit/
-state/feedback.jsonl
-state/ref-map.jsonl
-state/email-failures.json
-state/canary-status.json
-state/*-criteria.md
-state/*.log
+# Runtime state — ALL of it. Tokens, sessions, cursors, queues, audit,
+# logs, config. Ignore the whole tree, not file-by-file: enumerating
+# risks silently tracking a new secret-bearing state file. Seed/example
+# files live at the repo root (*.example), not under state/.
+state/
+
+# Generated output
 workspace/
-jobsmcp/
-.idea/
-__pycache__/
-*.pyc
-.claude/
+
+# Local-only content (de-authored repo; lives only on disk by design)
 source/
 skills/
-state/searxng/
+
+# Virtualenv
+jobsmcp/
+
+# Python artifacts
+__pycache__/
+*.pyc
 .coverage
-state/channels.json
-state/poller-heartbeat
-state/seen/
-state/weekly/
+
+# IDE / tooling
+.idea/
+.claude/
