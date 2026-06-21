@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Shared utilities for the telegram_MCP job pipeline — no external dependencies."""
 
-from .api import call_deepseek, extract_json
+from .api import call_deepseek, extract_json, TransportError, endpoint_reachable
 from .audit import write_audit
 from .auth import load_token, save_token, ensure_valid_token
 from .config import (PROJECT_DIR, STATE_DIR, DEEPSEEK_API_URL,
