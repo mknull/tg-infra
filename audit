@@ -688,6 +688,37 @@ def main():
         else:
             print(f"{DIM}poller: no heartbeat yet{RESET}")
 
+        # --- installed unit ExecStart paths resolve ---
+        # A repo-side script rename (e.g. it-jobs-poller.py -> it_jobs_poller.py)
+        # does not propagate to already-installed units: setup.sh only writes a
+        # unit when it is absent. A stale ExecStart then fails on every timer
+        # firing — silently, except the heartbeat above freezes. Catch the drift
+        # at its source by checking each in-project path the units point at.
+        unit_dir = os.path.expanduser("~/.config/systemd/user")
+        stale_units = []
+        if os.path.isdir(unit_dir):
+            for fn in sorted(os.listdir(unit_dir)):
+                if not fn.endswith(".service"):
+                    continue
+                try:
+                    raw = open(os.path.join(unit_dir, fn)).read()
+                except OSError:
+                    continue
+                # collapse systemd line continuations before reading ExecStart
+                for line in raw.replace("\\\n", " ").splitlines():
+                    if not line.strip().startswith("ExecStart="):
+                        continue
+                    for tok in line.split("=", 1)[1].split():
+                        if tok.startswith(PROJECT) and not os.path.exists(tok):
+                            stale_units.append((fn, tok))
+        if stale_units:
+            for fn, tok in stale_units:
+                print(f"{RED}UNIT STALE{RESET}: {fn} -> {tok} missing "
+                      f"(rerun setup.sh or fix ExecStart)")
+            exit_code = 1
+        elif os.path.isdir(unit_dir):
+            print(f"{GREEN}units: ExecStart paths resolve{RESET}")
+
         # --- per-source cascade health ---
         for src in SOURCES:
             records = load_records(src, since=since)
