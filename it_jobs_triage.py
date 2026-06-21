@@ -9,7 +9,7 @@ from pathlib import Path
 
 from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, call_deepseek, extract_json, deliver, write_audit,
-                 setup_logging, SeenLedger)
+                 setup_logging, SeenLedger, TransportError, endpoint_reachable)
 
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
@@ -87,12 +87,14 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
                 return True, reason, windows
             i += 3
 
+        except TransportError:
+            # Endpoint unreachable: the model never saw this window. Not a
+            # decision — propagate so the caller defers the whole batch.
+            raise
         except Exception as e:
-            # DEAD-LETTER (bug-hunt): returning False here conflates "the API
-            # failed" with "do not pass to Pro". The window keeps decision=error,
-            # but the caller then dead-letters the message (see main()). A
-            # non-evaluation must not be terminal — tracked for the
-            # halt-and-resume fix.
+            # The model replied but the reply was unusable (bad JSON, etc.): an
+            # application fault, recorded as an error window. The caller retries
+            # it within the batch and only dead-letters if it persists.
             logging.error("flash window %d error: %s", i + 1, e)
             windows.append({
                 "window_start": i + 1,
@@ -148,8 +150,60 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str, dict]:
         message = result.get("message", "")
         tags = result.get("tags", {})
         return decision, reason, message, tags
+    except TransportError:
+        # Endpoint unreachable — defer the batch, do not seal this message.
+        raise
     except Exception as e:
         return "error", str(e), "", {}
+
+
+# ---------------------------------------------------------------------------
+# batch processing
+# ---------------------------------------------------------------------------
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _evaluate(content: str, ch_config: dict, api_key: str) -> dict:
+    """One full evaluation pass — Flash, then Pro if Flash flags. Returns the
+    {flash, pro?} portion of the record. Raises TransportError if the endpoint is
+    unreachable; a non-transport model fault surfaces as decision 'error'."""
+    flag, flash_reason, windows = flash_incremental(
+        content, ch_config.get("desired_roles", ""),
+        ch_config.get("acceptable_roles", ""), api_key)
+    flash_errored = any(w.get("decision") == "error" for w in windows)
+    rec = {"flash": {
+        "model": FLASH_MODEL,
+        "decision": "error" if flash_errored else ("flag" if flag else "skip"),
+        "reason": flash_reason, "at": _now(), "windows": windows}}
+    if flash_errored or not flag:
+        return rec
+    decision, reason, message, tags = pro_full_eval(content, api_key)
+    rec["pro"] = {"model": PRO_MODEL, "decision": decision,
+                  "reason": reason, "at": _now(), "tags": tags}
+    if decision == "send" and message:
+        rec["pro"]["message"] = message
+    return rec
+
+
+def evaluate_message(content: str, ch_config: dict, api_key: str) -> dict:
+    """Evaluate one message exactly once. The batch is entered only after the
+    endpoint is confirmed reachable, so a message is never evaluated twice:
+      - a clean reply -> its decision;
+      - an unusable reply (reachable, but bad output) -> dead_letter, the
+        retained terminal signal that tests the assumption that access is the
+        only failure mode;
+      - TransportError (the link dropped mid-batch) -> propagate so the caller
+        defers the remainder, leaving this message un-evaluated for the next
+        run's first attempt.
+    """
+    rec = _evaluate(content, ch_config, api_key)
+    if rec["flash"]["decision"] == "error":
+        rec["flash"]["decision"] = "dead_letter"
+    if rec.get("pro", {}).get("decision") == "error":
+        rec["pro"]["decision"] = "dead_letter"
+    return rec
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +224,17 @@ def main() -> None:
         logging.info("No messages in queue.")
         return
 
+    # Confirm we have the model before touching the queue. On an unreliable host
+    # this is the difference between a clean deferral and a batch of half-made
+    # calls: if the link is down, process nothing and let the next run resume.
+    if not endpoint_reachable():
+        logging.warning("model endpoint unreachable — deferring batch (%d queued)",
+                        len(files))
+        sys.exit(1)
+
     logging.info("Processing %d message(s).", len(files))
     seen = SeenLedger("telegram")
+    deferred = False
     for path in files:
         try:
             entry = json.loads(path.read_text())
@@ -190,11 +253,24 @@ def main() -> None:
         message_id = meta.get("message_id", path.stem)
         arrived_at = meta.get("ts", "")
         preview = content.split("\n")[0][:120]
+        msg_id = f"{arrived_at}-{channel}-{message_id}"
+
+        # Idempotency: the poller can re-queue a message (re-fetch at the cursor
+        # boundary); skip anything already brought to a terminal state.
+        if msg_id in seen:
+            logging.info("[%s/%s] already processed, skipping", channel, message_id)
+            path.unlink(missing_ok=True)
+            continue
+
+        ch_config = _load_channel_config().get(channel)
+        if not ch_config:
+            logging.warning("[%s/%s] channel not in channels.json, skipping", channel, message_id)
+            path.unlink(missing_ok=True)
+            continue
 
         logging.info("[%s/%s] arrived=%s | \"%s\"", channel, message_id, arrived_at, preview)
-
         record = {
-            "msg_id": f"{arrived_at}-{channel}-{message_id}",
+            "msg_id": msg_id,
             "source": channel,
             "sender": user,
             "preview": preview,
@@ -202,80 +278,41 @@ def main() -> None:
             "arrived_at": arrived_at,
         }
 
-        # Idempotency: the poller can re-queue a message (re-fetch at the cursor
-        # boundary); skip anything already brought to a terminal state.
-        if record["msg_id"] in seen:
-            logging.info("[%s/%s] already processed, skipping", channel, message_id)
-            path.unlink(missing_ok=True)
-            continue
+        # An unreachable endpoint means this is not a valid batch: stop, leave
+        # this message and every one after it in the queue, seal nothing, and let
+        # the next run retry the lot. No message is made terminal un-evaluated.
+        try:
+            record.update(evaluate_message(content, ch_config, api_key))
+        except TransportError as e:
+            logging.error("[%s/%s] model unreachable — deferring batch: %s",
+                          channel, message_id, e)
+            deferred = True
+            break
 
-        # --- Flash ---
-        flash_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        ch_config = _load_channel_config().get(channel)
-        if not ch_config:
-            logging.warning("[%s/%s] channel not in channels.json, skipping", channel, message_id)
-            path.unlink(missing_ok=True)
-            continue
+        pro = record.get("pro", {})
+        logging.info("[%s/%s] flash=%s pro=%s", channel, message_id,
+                     record["flash"]["decision"], pro.get("decision", "-"))
 
-        desired_roles = ch_config.get("desired_roles", "")
-        acceptable_roles = ch_config.get("acceptable_roles", "")
-        flag, flash_reason, flash_windows = flash_incremental(
-            content, desired_roles, acceptable_roles, api_key)
-
-        # DEAD-LETTER (bug-hunt): a transient/model Flash failure (DNS, 503,
-        # timeout) is NOT a disqualification — the message was never evaluated.
-        # The audit caught it via the errored window, but the top-level decision
-        # used to forge a "skip", making a non-evaluation indistinguishable from
-        # a real reject. Label it honestly as a dead letter instead.
-        # NOTE: this is the behaviour we are hunting to ELIMINATE. The message is
-        # still sealed in `seen` and renamed out of the queue below — a
-        # non-evaluation made terminal, which violates seen.py's own "only
-        # terminal ids are recorded" invariant. Honest label first (greppable:
-        # "DEAD-LETTER (bug-hunt)"); halt-and-resume / no-sanctioned-loss fix next.
-        flash_errored = any(w.get("decision") == "error" for w in flash_windows)
-        record["flash"] = {
-            "model": FLASH_MODEL,
-            "decision": "dead_letter" if flash_errored else ("flag" if flag else "skip"),
-            "reason": flash_reason,
-            "at": flash_at,
-            "windows": flash_windows,
-        }
-
-        # --- Pro ---
-        if flag:
-            pro_decision, pro_reason, pro_message, pro_tags = pro_full_eval(content, api_key)
-            pro_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            record["pro"] = {
-                "model": PRO_MODEL,
-                "decision": pro_decision,
-                "reason": pro_reason,
-                "at": pro_at,
-                "tags": pro_tags,
-            }
-            logging.info("[%s/%s] pro → %s | %s", channel, message_id, pro_decision, pro_reason)
-
-            if pro_decision == "send" and pro_message and bot_token:
-                record["pro"]["message"] = pro_message
-                # origin preserves provenance — which channel/user the job came from
-                origin = f"@{channel} · @{user}"
-                tg_msg_id = deliver("job_match", f"{origin}\n\n{pro_message}",
-                                    ref=record["msg_id"])
-                if tg_msg_id:
-                    logging.info("[%s/%s] delivered to Telegram as msg %s",
-                                 channel, message_id, tg_msg_id)
-                else:
-                    logging.error("[%s/%s] delivery failed", channel, message_id)
-        else:
-            logging.info("[%s/%s] pro skipped (flash: skip)", channel, message_id)
+        if pro.get("decision") == "send" and pro.get("message") and bot_token:
+            # origin preserves provenance — which channel/user the job came from
+            origin = f"@{channel} · @{user}"
+            tg_msg_id = deliver("job_match", f"{origin}\n\n{pro['message']}",
+                                ref=msg_id)
+            if tg_msg_id:
+                logging.info("[%s/%s] delivered to Telegram as msg %s",
+                             channel, message_id, tg_msg_id)
+            else:
+                logging.error("[%s/%s] delivery failed", channel, message_id)
 
         write_audit(record, AUDIT_FILE)
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
-        msg_id = record["msg_id"]
         path.rename(MESSAGES_DIR / f"{msg_id}.json")
         seen.add(msg_id)
 
     seen.save()
-    logging.info("Done.")
+    logging.info("Done%s.", " (batch deferred — will retry next run)" if deferred else "")
+    if deferred:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
