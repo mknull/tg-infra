@@ -4,7 +4,8 @@
 
 A self-contained job-market intelligence pipeline. Monitors Telegram groups and Outlook inboxes, runs a two-stage DeepSeek triage to filter vacancies for relevance, delivers matches to a private Telegram chat, and adapts to user feedback over time. Built to run unattended under systemd.
 
-**Important:** Before cloning the repository, please review EU_AI_ACT_notice.md
+**Important:** Before cloning the repository, please review
+[EU_AI_ACT_NOTICE.md](EU_AI_ACT_NOTICE.md).
 
 ## Architecture
 
