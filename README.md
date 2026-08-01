@@ -4,9 +4,6 @@
 
 A self-contained job-market intelligence pipeline. Monitors Telegram groups and Outlook inboxes, runs a two-stage DeepSeek triage to filter vacancies for relevance, delivers matches to a private Telegram chat, and adapts to user feedback over time. Built to run unattended under systemd.
 
-**Important:** Before cloning the repository, please review
-[EU_AI_ACT_NOTICE.md](EU_AI_ACT_NOTICE.md).
-
 ## Architecture
 
 ```mermaid
@@ -82,6 +79,12 @@ The audit found the cursor precision bug, the false-positive minute-granularity 
 
 The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/searxng/searxng) instance in Docker, bound to `127.0.0.1`. No third-party search API, no API keys, no rate limits. The agent's filesystem sandbox can't reach it directly — only the `web_search` tool function can.
 
+## Regulatory scope
+
+This repository includes a deployment-specific
+[EU AI Act assessment](EU_AI_ACT_NOTICE.md) describing its intended use
+and the changes that could alter its regulatory classification.
+
 ## Project structure
 
 ```
@@ -127,3 +130,5 @@ The agent's `web_search` targets a self-hosted [SearXNG](https://github.com/sear
 - systemd (user timers, no root)
 
 No LangChain. No hosted scrapers. No proprietary search APIs.
+
+
