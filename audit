@@ -212,29 +212,95 @@ def print_record(r, feedback=None, show_content=False, verbose=False):
 
 
 def print_summary(records, label, feedback=None):
-    """Print aggregate stats for a set of records."""
+    """Print aggregate stats for a set of records, collapsed by msg_id.
+
+    The poller writes an arrival record and the triage writes an evaluation
+    record for the same msg_id. Collapse them so one logical message = one row
+    in the summary, with arrival metadata merged into the evaluation record.
+    """
     if not records:
         print(f"{label}: no records\n")
         return
 
-    total = len(records)
-    unique = len(set(r.get("msg_id", i) for i, r in enumerate(records)))
-    decisions = {}
+    # ── briefme (agent) records use a different schema ──────────────
+    if label == "briefme" or any("turns" in r for r in records):
+        total = len(records)
+        successes = sum(1 for r in records if r.get("success"))
+        failures = total - successes
+        tool_calls = sum(len(r.get("tool_calls", [])) for r in records)
+        tool_errors = sum(r.get("tool_errors", 0) for r in records)
+        total_duration = sum(r.get("duration_s", 0) for r in records)
+        total_brief_bytes = sum(r.get("brief_bytes", 0) for r in records)
+
+        status = GREEN if failures == 0 else RED
+        print(f"{BOLD}{label}{RESET}: {total} briefs "
+              f"({GREEN}{successes} success{RESET}, "
+              f"{RED}{failures} failed{RESET})")
+        print(f"  {tool_calls} tool calls, {tool_errors} errors, "
+              f"{total_brief_bytes}B briefs, {total_duration:.0f}s total")
+        if failures:
+            for r in records:
+                if not r.get("success"):
+                    print(f"  {RED}✗{RESET} {r.get('preview', '?')[:80]}: {r.get('error', '?')}")
+        print()
+        return
+
+    # ── group by msg_id, merge arrival + evaluation ─────────────────
+    from collections import defaultdict
+    by_msg = defaultdict(dict)
     for r in records:
+        mid = r.get("msg_id", "")
+        merged = by_msg[mid]
+        merged["msg_id"] = mid  # keep for feedback lookup
+        # Metadata from any record (first wins — same value either way)
+        for key in ("source", "sender", "preview", "content", "arrived_at"):
+            if key in r and key not in merged:
+                merged[key] = r[key]
+        # Evaluation stages — take from whichever record has them
         for stage in ("flash", "pro"):
             if stage in r:
-                d = r[stage]["decision"]
+                merged[stage] = r[stage]
+        # Track arrival stage presence
+        if r.get("stage") == "arrival":
+            merged["_has_arrival"] = True
+
+    merged_records = list(by_msg.values())
+    total_raw = len(records)
+    unique = len(merged_records)
+    has_arrival = sum(1 for m in merged_records if m.get("_has_arrival"))
+    unevaluated = sum(1 for m in merged_records
+                      if "flash" not in m and "pro" not in m)
+
+    # ── decisions (per unique message, not per record) ──────────────
+    decisions = {}
+    for m in merged_records:
+        for stage in ("flash", "pro"):
+            if stage in m:
+                d = m[stage]["decision"]
                 decisions.setdefault(stage, {}).setdefault(d, 0)
                 decisions[stage][d] += 1
 
-    sends = [r for r in records if "pro" in r and r["pro"]["decision"] == "send"]
-    errors = [r for r in records if ("flash" in r and r["flash"]["decision"] == "error")
-              or ("pro" in r and r["pro"]["decision"] == "error")]
-    # DEAD-LETTER (bug-hunt): a non-evaluation (transient/model error) sealed as
-    # terminal. Surface it so we know what's dead-lettering, per pipeline.
-    dead = [r for r in records if is_dead_letter(r)]
+    sends = [m for m in merged_records
+             if m.get("pro", {}).get("decision") == "send"]
+    errors = [m for m in merged_records
+              if (m.get("flash", {}).get("decision") == "error")
+              or (m.get("pro", {}).get("decision") == "error")]
+    dead = [m for m in merged_records if is_dead_letter(m)]
 
-    print(f"{BOLD}{label}{RESET}: {total} records, {unique} unique messages")
+    # ── output ─────────────────────────────────────────────────────
+    # Header line
+    header = f"{BOLD}{label}{RESET}: {unique} messages"
+    detail = []
+    if total_raw != unique:
+        detail.append(f"{total_raw} raw records")
+    if has_arrival:
+        detail.append(f"{has_arrival} with arrival stage")
+    if unevaluated:
+        detail.append(f"{RED}{unevaluated} unevaluated{RESET}")
+    if detail:
+        header += " (" + ", ".join(detail) + ")"
+    print(header)
+
     for stage, counts in decisions.items():
         parts = "  ".join(f"{color_decision(k)}:{v}" for k, v in sorted(counts.items()))
         print(f"  {stage}: {parts}")
@@ -245,13 +311,13 @@ def print_summary(records, label, feedback=None):
     if dead:
         print(f"  {RED}dead-letters: {len(dead)}{RESET}")
 
-    # feedback stats for this source's sends
+    # ── feedback stats ─────────────────────────────────────────────
     if feedback and sends:
         fb_sends = 0
         fb_confirmed = 0
         fb_corrected = 0
-        for r in sends:
-            fb_list = feedback.get(r.get("msg_id", ""))
+        for m in sends:
+            fb_list = feedback.get(m.get("msg_id", ""))
             if fb_list:
                 fb_sends += 1
                 for fb in fb_list:
@@ -733,6 +799,16 @@ def main():
                 high_errors = [r for r in records
                               if len(r.get("tool_calls", [])) > 0
                               and r.get("tool_errors", 0) / len(r["tool_calls"]) > 0.5]
+                # Signature of dead search engines: a brief whose web_search
+                # calls ALL returned ~16 bytes ("no results found") searched
+                # but got nothing every time — engines blocked, not a miss.
+                # Require >=2 searches so one-off empty queries don't alarm.
+                search_down = [r for r in records
+                               if len([t for t in r.get("tool_calls", [])
+                                       if t.get("tool") == "web_search"]) >= 2
+                               and all(t.get("result_bytes", 0) <= 16
+                                       for t in r.get("tool_calls", [])
+                                       if t.get("tool") == "web_search")]
                 if failures:
                     print(f"{RED}BRIEFME FAILURES{RESET}: {len(failures)}/{total} "
                           f"briefs failed")
@@ -745,7 +821,12 @@ def main():
                     print(f"{RED}BRIEFME TOOL ERRORS{RESET}: {len(high_errors)}/{total} "
                           f"briefs with >50% tool failures")
                     exit_code = 1
-                if not failures and not zero_tools and not high_errors:
+                if search_down:
+                    print(f"{RED}BRIEFME SEARCH DOWN{RESET}: {len(search_down)}/{total} "
+                          f"briefs got zero results from every search — SearXNG "
+                          f"engines blocked or dead")
+                    exit_code = 1
+                if not failures and not zero_tools and not high_errors and not search_down:
                     print(f"{GREEN}{src}: clean{RESET}")
                 continue
 
