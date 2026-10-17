@@ -1,0 +1,12 @@
+{
+  "feeds": [
+    {
+      "id": "fossjobs",
+      "name": "FOSSJobs",
+      "url": "https://www.fossjobs.net/rss/all/",
+      "enabled": true,
+      "desired_roles": "Paid job vacancies involving free and open source software",
+      "acceptable_roles": "Other paid technical roles; Pro checks the candidate profile"
+    }
+  ]
+}

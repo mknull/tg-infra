@@ -163,6 +163,14 @@ else
     skip "channels.json already exists"
 fi
 
+FEEDS_FILE="$STATE_DIR/feeds.json"
+if [[ ! -f "$FEEDS_FILE" ]]; then
+    cp "$PROJECT_DIR/feeds.json.example" "$FEEDS_FILE"
+    log "Created $FEEDS_FILE — FOSSJobs RSS enabled; add feeds here"
+else
+    skip "feeds.json already exists"
+fi
+
 # ---------- step 7: profile generation ----------
 
 step "Profile generation"
@@ -255,6 +263,7 @@ UNITS=(
     # oneshot unit then stays "activating" forever, and the timer skips every
     # later fire. systemd killing the hung run lets the next fire backfill.
     [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it_jobs_poller.py|15min"
+    [rss-poll]="Poll RSS and Atom job feeds|*-*-* 06:10:00|$PYTHON $PROJECT_DIR/rss_poller.py|15min"
     [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it_jobs_triage.py"
     [email-ingest]="Fetch and triage Outlook emails|*-*-* 0/2:45:00|$PROJECT_DIR/email-ingest-wrap"
     [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly_trend.py"

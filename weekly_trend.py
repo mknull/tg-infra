@@ -12,6 +12,7 @@ from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL,
                  ensure_valid_token, setup_logging,
                  report_week, load_ledger, update_ledger,
                  report_in_sent_items)
+from lib.sources import JOB_AUDIT_FILES
 
 AUDIT_DIR = STATE_DIR / "audit"
 DRY_RUN = "--dry-run" in sys.argv
@@ -36,7 +37,8 @@ def load_week_records(start_iso: str, end_iso: str) -> list[dict]:
     and produce the same report.
     """
     records = []
-    for audit_file in (AUDIT_DIR / "telegram.jsonl", AUDIT_DIR / "email.jsonl"):
+    for filename in JOB_AUDIT_FILES.values():
+        audit_file = AUDIT_DIR / filename
         if not audit_file.exists():
             continue
         with audit_file.open() as f:

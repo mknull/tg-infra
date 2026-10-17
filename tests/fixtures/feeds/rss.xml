@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"><channel>
+  <title>Fixture Jobs</title><link>https://jobs.example/</link><description>Test vacancies</description>
+  <item>
+    <title>Python Engineer</title>
+    <link>https://jobs.example/jobs/42</link>
+    <pubDate>Tue, 13 Oct 2026 12:00:00 +0300</pubDate>
+    <description><![CDATA[<p>Build open source tools &amp; services.</p><p>Remote role.</p><p><a href="https://employer.example/apply/42">Apply here</a></p>]]></description>
+  </item>
+  <item>
+    <guid isPermaLink="false">vacancy-43</guid>
+    <title>Research Engineer</title><link>https://jobs.example/jobs/43</link>
+    <description><![CDATA[<p>Work on machine learning.</p>]]></description>
+  </item>
+</channel></rss>

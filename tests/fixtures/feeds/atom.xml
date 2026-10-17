@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:base="https://jobs.example/">
+  <title>Atom Jobs</title><id>urn:fixture:jobs</id><updated>2026-10-13T09:00:00Z</updated>
+  <entry>
+    <id>urn:fixture:job:44</id><title>Systems Engineer</title>
+    <link rel="self" href="/api/44"/><link rel="alternate" href="/jobs/44"/>
+    <published>2026-10-13T12:00:00+03:00</published><updated>2026-10-14T09:00:00Z</updated>
+    <summary>Short summary</summary>
+    <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Full description.</p><p><a href="/apply/44">Apply</a></p></div></content>
+  </entry>
+</feed>

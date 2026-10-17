@@ -12,6 +12,7 @@ from pathlib import Path
 from lib import (load_env, send_telegram_document, STATE_DIR,
                  setup_logging, read_cursor, write_cursor)
 from agent import run_agent
+from lib.sources import JOB_AUDIT_FILES
 
 PROJECT_DIR = Path(__file__).resolve().parent
 MESSAGES_DIR = STATE_DIR / "messages"
@@ -77,7 +78,7 @@ def lookup_original_content(quoted_msg_id: str) -> tuple[str | None, str | None]
             pass
 
     # Fall back to audit files
-    for audit_name in ["telegram.jsonl", "email.jsonl"]:
+    for audit_name in JOB_AUDIT_FILES.values():
         audit_file = AUDIT_DIR / audit_name
         if not audit_file.exists():
             continue

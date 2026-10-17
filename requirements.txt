@@ -2,3 +2,4 @@ telethon
 markdown
 weasyprint
 playwright
+feedparser>=6.0.11,<7

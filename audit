@@ -2,9 +2,9 @@
 """audit — query the job-triage audit trail.
 
 Usage:
-    ./audit [email|telegram] [--last N] [--since TS] [--today] [--content] [--verbose]
+    ./audit [email|telegram|rss] [--last N] [--since TS] [--today] [--content] [--verbose]
 
-Without arguments, shows the last 3 entries from both pipelines.
+Without arguments, shows the last 3 entries across pipelines.
 Pass --help for full usage.
 """
 import argparse
@@ -12,13 +12,14 @@ import json
 import os
 import sys
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from lib.sources import JOB_AUDIT_FILES, load_feeds
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(PROJECT, "state")
 AUDIT_DIR = os.path.join(STATE, "audit")
 
-SOURCES = {"email": "email.jsonl", "telegram": "telegram.jsonl",
-           "briefme": "agent.jsonl"}
+SOURCES = {**JOB_AUDIT_FILES, "briefme": "agent.jsonl"}
 FEEDBACK_FILE = os.path.join(STATE, "feedback.jsonl")
 REF_MAP_FILE = os.path.join(STATE, "ref-map.jsonl")
 
@@ -388,6 +389,9 @@ def load_all(since=None, last=None, today=False):
 
 # Expected cascade topologies per pipeline
 EXPECTED = {
+    "rss": """
+  Feed → durable queue → Flash(incremental) → Pro(full description) → Delivery
+                         └──skip             └──skip""",
     "email": """
   Arrival ──▶ Flash(from+subject) ──read──▶ fetch body ──▶ Pro(full body) ──send──▶ Feedback
                                   │                          │
@@ -648,7 +652,8 @@ def main():
         description="Query the job-triage audit trail.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  ./audit                     last 3 from both pipelines
+  ./audit                     last 3 across pipelines
+  ./audit rss                 last 3 feed decisions
   ./audit email               last 3 email decisions
   ./audit --today             everything from today
   ./audit email --since 2026-05-18   email since midnight UTC
@@ -658,7 +663,7 @@ def main():
   ./audit --topology --days 3 cascade topology (3d window)
   ./audit email --content     include full bodies""",
     )
-    p.add_argument("source", nargs="?", choices=["email", "telegram", "briefme"],
+    p.add_argument("source", nargs="?", choices=list(SOURCES),
                    help="pipeline to query (default: all)")
     p.add_argument("--last", "-n", type=int, default=3,
                    help="show last N records (default: 3)")
@@ -753,6 +758,29 @@ def main():
                 print(f"{YELLOW}poller: unreadable heartbeat{RESET}")
         else:
             print(f"{DIM}poller: no heartbeat yet{RESET}")
+
+        # Daily feeds have independent fetch status, including failed/empty responses.
+        try:
+            feeds = load_feeds(Path(STATE) / "feeds.json")
+            for feed in feeds.values():
+                if not feed.get("enabled", True):
+                    continue
+                status_file = Path(STATE) / "rss" / feed["id"] / "status.json"
+                if not status_file.exists():
+                    print(f"{RED}RSS {feed['id']}: never polled{RESET}")
+                    exit_code = 1
+                    continue
+                status = json.loads(status_file.read_text())
+                age = (datetime.now(timezone.utc) - datetime.fromisoformat(status["at"].replace("Z", "+00:00"))).total_seconds()
+                if not status["ok"] or age > 48 * 3600:
+                    detail = status.get("error", "last successful poll over 48 hours ago")
+                    print(f"{RED}RSS {feed['id']}: {detail}{RESET}")
+                    exit_code = 1
+                else:
+                    print(f"{GREEN}RSS {feed['id']}: fetched {age / 3600:.1f}h ago{RESET}")
+        except (ValueError, KeyError, TypeError, OSError) as error:
+            print(f"{RED}RSS health: {error}{RESET}")
+            exit_code = 1
 
         # --- installed unit ExecStart paths resolve ---
         # A repo-side script rename (e.g. it-jobs-poller.py -> it_jobs_poller.py)

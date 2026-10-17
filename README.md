@@ -1,8 +1,10 @@
 # telegram_MCP
 
+Start here: [repository orientation and safe verification](ORIENTATION.md).
+
 [![CI](https://github.com/mknull/tg-infra/actions/workflows/ci.yml/badge.svg)](https://github.com/mknull/tg-infra/actions/workflows/ci.yml)
 
-A self-contained job-market intelligence pipeline. Monitors Telegram groups and Outlook inboxes, runs a two-stage DeepSeek triage to filter vacancies for relevance, delivers matches to a private Telegram chat, and adapts to user feedback over time. Built to run unattended under systemd.
+A self-contained job-market intelligence pipeline. Monitors Telegram groups, RSS/Atom job feeds, and Outlook folders, runs a two-stage DeepSeek triage to filter vacancies for relevance, delivers matches to a private Telegram chat, and adapts to user feedback over time. Built to run unattended under systemd.
 
 ## Architecture
 
@@ -10,6 +12,7 @@ A self-contained job-market intelligence pipeline. Monitors Telegram groups and 
 flowchart TB
   subgraph Input
     Poller[it-jobs-poller<br/>Telegram → queue]
+    RSS[rss_poller<br/>RSS/Atom → queue]
     Email[email-triage<br/>Graph API fetch]
   end
 
@@ -31,6 +34,7 @@ flowchart TB
   Audit["audit trail<br/>state/audit/"]
 
   Poller --> Flash
+  RSS --> Flash
   Email --> Flash
   Flash -->|pass_to_pro| Pro
   Pro -->|"forward"| Chat
@@ -53,6 +57,46 @@ Pro extracts structured tags (role title, skills, domain, seniority, remote stat
 ### Per-channel config, not per-channel code
 
 Channel descriptions live in `state/channels.json` — each entry specifies what the channel is about, how messages are formatted, and what roles the user wants vs. will accept. The flash prompt is a fixed template; channel-specific values are interpolated at runtime. No channel-specific code paths.
+
+### RSS/Atom feeds
+
+Start with [FOSSJobs](https://www.fossjobs.net/rss/all/), whose public feed includes
+full descriptions. RSS 1.0/RDF, RSS 2.0, and Atom use the same collector.
+
+```bash
+jobsmcp/bin/python3 -m pip install -r requirements.txt
+# First-time configuration only; preserve an existing feeds.json.
+cp -n feeds.json.example state/feeds.json
+jobsmcp/bin/python3 rss_poller.py
+./audit rss --content
+```
+
+The collector queues **all currently available entries on its first run**. The
+existing `job-triage` timer evaluates them against `state/it-jobs-criteria.md` and
+delivers matches; `/briefme` and weekly reporting include feed content. Feed titles,
+original URLs, and application links are preserved. No linked-page crawling is needed.
+
+Add another object to `state/feeds.json` with a unique stable `id`, `name`, and `url`;
+`desired_roles` and `acceptable_roles` tune Flash. Set `enabled` to `false` to pause
+both polling and pending triage for that feed. Missing configuration disables RSS.
+
+`setup.sh` seeds the FOSSJobs configuration on fresh installs and generates
+`rss-poll.service` / `rss-poll.timer`, scheduled daily at **06:10 host local time**.
+Existing deployments need the new unit installed and enabled; editing this repository
+alone does not activate it. `./setup.sh` installs the new timer through the existing
+setup/verification flow. The collector itself makes no model calls or deliveries.
+
+Each feed keeps a persistent JSON index under `state/rss/<id>/` plus raw response
+snapshots and poll status. Identity uses the feed's entry ID, falling back to its
+URL. A changed description creates a new queued revision of the same job; unchanged
+polls and publication-date-only changes do not requeue it. Disappearing entries remain
+in the index and are never inferred closed. This first channel does not attempt
+cross-feed duplicate matching or a full job catalog/export.
+
+HTTP fetching uses conditional requests, timeouts, a 2 MiB response limit, and bounded
+retries. Malformed, empty, or blocked feeds fail independently without advancing their
+index. `./audit --health` reports feed failures and polls older than 48 hours.
+Raw snapshots and the index are retained without automatic pruning.
 
 ### `/briefme` agent
 
@@ -95,6 +139,7 @@ and the changes that could alter its regulatory classification.
 ├── audit                   CLI audit tool
 │
 ├── it_jobs_poller.py       Telethon poller (Telegram groups → queue)
+├── rss_poller.py           RSS/Atom collector (configured feeds → queue)
 ├── it_jobs_triage.py       Queue → incremental Flash → Pro → delivery
 ├── email_triage.py         Outlook Graph API → Flash → Pro → delivery
 ├── email-ingest-wrap       Email ingest + audit health check + Telegram alert
@@ -113,16 +158,17 @@ and the changes that could alter its regulatory classification.
 ├── state/                  Runtime state (cursors, audit, queue, config, tokens)
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles
 ├── channels.json.example   Seed for state/channels.json on a clean checkout
+├── feeds.json.example      FOSSJobs preset for state/feeds.json
 ├── source/                 Profile inputs (interests, skills, tech_stack)
-├── tests/                  242 tests across 21 files (unittest)
+├── tests/                  Unit and integration tests; feeds use offline fixtures
 │
-├── .github/workflows/ci.yml  CI: run 242 tests + audit health check
-└── requirements.txt        telethon, markdown, weasyprint, playwright
+├── .github/workflows/ci.yml  CI: unittest suite + audit health check
+└── requirements.txt        telethon, markdown, weasyprint, playwright, feedparser
 ```
 
 ## Dependencies
 
-- Python ≥ 3.10, a single venv, four pip packages
+- Python ≥ 3.10, a single venv
 - DeepSeek API (flash + pro models)
 - Microsoft Graph API (Outlook email — optional)
 - Telethon (Telegram MTProto user-API)

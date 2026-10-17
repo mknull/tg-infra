@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Two-model triage for Telegram job group postings."""
+"""Two-model triage for queued Telegram and RSS/Atom job postings."""
 
 import json
 import logging
@@ -10,10 +10,12 @@ from pathlib import Path
 from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, call_deepseek, extract_json, deliver, write_audit,
                  setup_logging, SeenLedger, TransportError, endpoint_reachable)
+from lib.sources import load_feeds
 
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
 AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
+RSS_AUDIT_FILE = STATE_DIR / "audit" / "rss.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
 
 
@@ -233,7 +235,7 @@ def main() -> None:
         sys.exit(1)
 
     logging.info("Processing %d message(s).", len(files))
-    seen = SeenLedger("telegram")
+    ledgers = {"telegram_group": SeenLedger("telegram")}
     deferred = False
     for path in files:
         try:
@@ -244,16 +246,34 @@ def main() -> None:
             continue
 
         meta = entry.get("meta", {})
-        if meta.get("source") != "telegram_group":
+        source_type = meta.get("source")
+        if source_type not in ("telegram_group", "rss"):
             continue
 
         content = entry.get("content", "")
-        channel = meta.get("chat_id", "unknown")
-        user = meta.get("user", "unknown")
-        message_id = meta.get("message_id", path.stem)
         arrived_at = meta.get("ts", "")
         preview = content.split("\n")[0][:120]
-        msg_id = f"{arrived_at}-{channel}-{message_id}"
+        message_id = meta.get("message_id", path.stem)
+        if source_type == "rss":
+            channel = meta["feed_id"]
+            user = meta.get("source_name", channel)
+            msg_id = message_id
+            ch_config = load_feeds().get(channel)
+            if not ch_config or not ch_config.get("enabled", True):
+                logging.warning("[rss/%s] feed disabled or missing; retaining queued item", channel)
+                continue
+            audit_file = RSS_AUDIT_FILE
+            origin = f"{user}\n{meta['url']}"
+            if source_type not in ledgers:
+                ledgers[source_type] = SeenLedger("rss")
+        else:
+            channel = meta.get("chat_id", "unknown")
+            user = meta.get("user", "unknown")
+            msg_id = f"{arrived_at}-{channel}-{message_id}"
+            ch_config = _load_channel_config().get(channel)
+            audit_file = AUDIT_FILE
+            origin = f"@{channel} · @{user}"
+        seen = ledgers[source_type]
 
         # Idempotency: the poller can re-queue a message (re-fetch at the cursor
         # boundary); skip anything already brought to a terminal state.
@@ -262,7 +282,6 @@ def main() -> None:
             path.unlink(missing_ok=True)
             continue
 
-        ch_config = _load_channel_config().get(channel)
         if not ch_config:
             logging.warning("[%s/%s] channel not in channels.json, skipping", channel, message_id)
             path.unlink(missing_ok=True)
@@ -271,12 +290,15 @@ def main() -> None:
         logging.info("[%s/%s] arrived=%s | \"%s\"", channel, message_id, arrived_at, preview)
         record = {
             "msg_id": msg_id,
-            "source": channel,
+            "source": "rss" if source_type == "rss" else channel,
             "sender": user,
             "preview": preview,
             "content": content,
             "arrived_at": arrived_at,
         }
+        if source_type == "rss":
+            record.update({key: meta.get(key) for key in
+                           ("feed_id", "source_id", "job_id", "url", "posted_at", "content_hash", "change")})
 
         # An unreachable endpoint means this is not a valid batch: stop, leave
         # this message and every one after it in the queue, seal nothing, and let
@@ -294,8 +316,7 @@ def main() -> None:
                      record["flash"]["decision"], pro.get("decision", "-"))
 
         if pro.get("decision") == "send" and pro.get("message") and bot_token:
-            # origin preserves provenance — which channel/user the job came from
-            origin = f"@{channel} · @{user}"
+            # Preserve the input's attribution and link independently of its format.
             tg_msg_id = deliver("job_match", f"{origin}\n\n{pro['message']}",
                                 ref=msg_id)
             if tg_msg_id:
@@ -304,12 +325,13 @@ def main() -> None:
             else:
                 logging.error("[%s/%s] delivery failed", channel, message_id)
 
-        write_audit(record, AUDIT_FILE)
+        write_audit(record, audit_file)
         MESSAGES_DIR.mkdir(parents=True, exist_ok=True)
         path.rename(MESSAGES_DIR / f"{msg_id}.json")
         seen.add(msg_id)
 
-    seen.save()
+    for seen in ledgers.values():
+        seen.save()
     logging.info("Done%s.", " (batch deferred — will retry next run)" if deferred else "")
     if deferred:
         sys.exit(1)
