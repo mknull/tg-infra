@@ -7,6 +7,50 @@
       "enabled": true,
       "desired_roles": "Paid job vacancies involving free and open source software",
       "acceptable_roles": "Other paid technical roles; Pro checks the candidate profile"
+    },
+    {
+      "id": "fsf",
+      "name": "Free Software Foundation Jobs",
+      "url": "https://www.fsf.org/resources/jobs/RSS/",
+      "enabled": true,
+      "include_title_prefixes": ["Job opportunity:"],
+      "desired_roles": "Paid free software job vacancies",
+      "acceptable_roles": "Other paid technical roles; exclude volunteer and informational entries"
+    },
+    {
+      "id": "opensourcejobhub",
+      "name": "Open Source JobHub",
+      "url": "https://opensourcejobhub.com/rss/",
+      "enabled": true,
+      "desired_roles": "Paid open source engineering and research roles",
+      "acceptable_roles": "Other paid technical roles; Pro checks the candidate profile"
+    },
+    {
+      "id": "wwr",
+      "name": "We Work Remotely",
+      "url": "https://weworkremotely.com/remote-jobs.rss",
+      "enabled": true,
+      "include_categories": ["Back-End Programming", "Front-End Programming", "Full-Stack Programming", "DevOps and Sysadmin"],
+      "desired_roles": "Remote engineering and research roles",
+      "acceptable_roles": "Other paid technical roles; check actual responsibilities and location restrictions"
+    },
+    {
+      "id": "nodesk",
+      "name": "NoDesk",
+      "url": "https://nodesk.co/remote-jobs/index.xml",
+      "enabled": true,
+      "repair_html_entities": true,
+      "desired_roles": "Remote engineering and research roles",
+      "acceptable_roles": "Other paid technical roles; Pro checks the candidate profile"
+    },
+    {
+      "id": "tails",
+      "name": "Tails Jobs",
+      "url": "https://tails.net/jobs/index.rss",
+      "enabled": true,
+      "allow_empty": true,
+      "desired_roles": "Paid privacy, security and free software roles",
+      "acceptable_roles": "Other paid technical roles; exclude volunteer work"
     }
   ]
 }

@@ -32,8 +32,10 @@ Tests live in `tests/`. Run the suite in a disposable copy (some older tests mod
 jobsmcp/bin/python3 -m unittest discover -s tests -t . -p 'test_*.py'
 ```
 
-The RSS fixtures and installer tests use temporary state and mocked external services:
-`jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_system_setup`.
+The RSS fixtures, process-level pipeline and installer tests use temporary state
+and mocked or loopback external services:
+`jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_e2e tests.test_system_setup`.
+The process-level tests require permission to bind a loopback socket.
 
 CI runs the full suite + `./audit --health` on every push.
 

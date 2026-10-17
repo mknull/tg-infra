@@ -53,6 +53,27 @@ class TestParsing(unittest.TestCase):
         item, = rss.parse_feed(fixture("rdf"), FEED["url"])
         self.assertEqual(item["url"], "https://jobs.example/jobs/45")
 
+    def test_named_entity_repair_is_opt_in_and_keeps_xml_validation(self):
+        raw = fixture("rdf").replace(b"Build free software.", b"Build &ldquo;free&rdquo; software.")
+        with self.assertRaises(ValueError):
+            rss.parse_feed(raw, FEED["url"])
+        item, = rss.parse_feed(raw, FEED["url"], repair_html_entities=True)
+        self.assertIn('Build “free” software.', item["content"])
+        for invalid in (raw.replace(b"&ldquo;", b"&unknown;"), raw.replace(b"</item>", b"</broken>")):
+            with self.subTest(raw=invalid), self.assertRaises(ValueError):
+                rss.parse_feed(invalid, FEED["url"], repair_html_entities=True)
+        cdata = b'<![CDATA[literal &rsquo; &amp;]]><!-- &rsquo; -->'
+        self.assertEqual(rss._repair_html_entities(cdata), cdata)
+
+    def test_expected_empty_feed_requires_opt_in_and_channel_metadata(self):
+        raw = fixture("empty")
+        with self.assertRaises(ValueError):
+            rss.parse_feed(raw, FEED["url"])
+        self.assertEqual(rss.parse_feed(raw, FEED["url"], allow_empty=True), [])
+        for invalid in (b'<rss version="2.0"/>', b'<html>No jobs</html>'):
+            with self.subTest(raw=invalid), self.assertRaises(ValueError):
+                rss.parse_feed(invalid, FEED["url"], allow_empty=True)
+
     def test_republication_date_does_not_change_content_identity(self):
         before = rss.parse_feed(fixture(), FEED["url"])[0]
         after = rss.parse_feed(fixture().replace(b"13 Oct", b"14 Oct"), FEED["url"])[0]
@@ -85,6 +106,43 @@ class _FeedState(unittest.TestCase):
 
 
 class TestIngestion(_FeedState):
+    def test_fsf_filters_volunteer_and_information_entries_before_queueing(self):
+        preset = load_feeds(Path(__file__).resolve().parents[1] / "feeds.json.example")["fsf"]
+        with patch.object(rss, "fetch_feed", return_value=(fixture("fsf"), {})):
+            result = rss.poll_feed(preset, self.state)
+        self.assertEqual((result["new"], result["filtered"], result["queued"]), (1, 2, 1))
+        entry = json.loads(self.queue()[0].read_text())
+        self.assertTrue(entry["content"].startswith("Job opportunity:"))
+
+    def test_category_selection_changes_reconsider_excluded_entries(self):
+        preset = load_feeds(Path(__file__).resolve().parents[1] / "feeds.json.example")["wwr"]
+        with patch.object(rss, "fetch_feed", return_value=(fixture("categories"), {})) as fetch:
+            result = rss.poll_feed(preset, self.state)
+            self.assertEqual((result["queued"], result["filtered"]), (1, 1))
+            queued = json.loads(self.queue()[0].read_text())
+            self.assertEqual(queued["meta"]["categories"], ["Back-End Programming"])
+            self.assertIn("Categories: Back-End Programming", queued["content"])
+            rss.poll_feed(preset, self.state)
+            self.assertIn("retrieved_at", fetch.call_args.args[1])
+            result = rss.poll_feed({**preset, "include_categories": []}, self.state)
+            self.assertEqual(fetch.call_args.args[1], {})
+            self.assertEqual(result["queued"], 1)
+
+    def test_expected_empty_poll_keeps_prior_jobs_and_accepts_304(self):
+        self.poll()
+        prior = json.loads(self.index.read_text())["items"]
+        with patch.object(rss, "fetch_feed", return_value=(fixture("empty"), {"etag": '"empty"'})):
+            result = rss.poll_feed({**FEED, "allow_empty": True}, self.state)
+        self.assertEqual(result["queued"], 0)
+        self.assertEqual(json.loads(self.index.read_text())["items"], prior)
+        empty_state = self.state / "first-empty"
+        with patch.object(rss, "fetch_feed", return_value=(fixture("empty"), {"etag": '"empty"'})):
+            rss.poll_feed({**FEED, "allow_empty": True}, empty_state)
+        error = urllib.error.HTTPError(FEED["url"], 304, "Not Modified", {}, None)
+        with patch.object(rss.urllib.request, "urlopen", side_effect=error):
+            result = rss.poll_feed({**FEED, "allow_empty": True}, empty_state)
+        self.assertTrue(result["not_modified"])
+
     def test_unchanged_rerun_is_idempotent_after_queue_consumption(self):
         self.assertEqual(self.poll()["queued"], 2)
         before = json.loads(self.index.read_text())
@@ -176,13 +234,18 @@ class TestIngestion(_FeedState):
             config.write_text(json.dumps({"feeds": feeds}))
             with self.assertRaises(ValueError):
                 load_feeds(config)
+        for key, value in (("allow_empty", "yes"), ("repair_html_entities", 1),
+                           ("include_title_prefixes", "Job"), ("include_categories", [""])):
+            config.write_text(json.dumps({"feeds": [{**FEED, key: value}]}))
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                load_feeds(config)
         config.write_text(json.dumps({"feeds": [FEED]}))
         self.assertEqual(load_feeds(config)["fixture"]["name"], "Fixture Jobs")
 
 
 class TestFetch(unittest.TestCase):
     def test_conditional_headers_and_not_modified(self):
-        previous = {"url": FEED["url"], "etag": '"v1"', "last_modified": "yesterday", "items": {"1": {}}}
+        previous = {"url": FEED["url"], "etag": '"v1"', "last_modified": "yesterday", "retrieved_at": "2026-10-17T00:00:00Z", "items": {"1": {}}}
         error = urllib.error.HTTPError(FEED["url"], 304, "Not Modified", {}, None)
         with patch.object(rss.urllib.request, "urlopen", side_effect=error) as fetch:
             self.assertEqual(rss.fetch_feed(FEED["url"], previous), (None, {}))

@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/">
+  <channel rdf:about="https://jobs.example/feed"><title>Free Software Jobs</title><link>https://jobs.example/</link><description>Synthetic mixed inventory</description></channel>
+  <item rdf:about="https://jobs.example/paid"><title>Job opportunity: Systems Engineer</title><link>https://jobs.example/paid</link><description>Maintain free software services.</description></item>
+  <item rdf:about="https://jobs.example/volunteer"><title>Volunteer opportunity: Developer</title><link>https://jobs.example/volunteer</link><description>Unpaid volunteer work.</description></item>
+  <item rdf:about="https://jobs.example/faq"><title>Frequently Asked Questions</title><link>https://jobs.example/faq</link><description>How to advertise a job.</description></item>
+</rdf:RDF>

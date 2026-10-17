@@ -32,8 +32,13 @@ def load_feeds(path: Path | None = None) -> dict[str, dict]:
         url = urlsplit(entry.get("url", ""))
         if url.scheme not in ("http", "https") or not url.netloc:
             raise ValueError(f"{source_id}: an HTTP(S) feed URL is required")
-        if not isinstance(entry.get("enabled", True), bool):
-            raise ValueError(f"{source_id}: enabled must be a boolean")
+        for key in ("enabled", "allow_empty", "repair_html_entities"):
+            if key in entry and not isinstance(entry[key], bool):
+                raise ValueError(f"{source_id}: {key} must be a boolean")
+        for key in ("include_title_prefixes", "include_categories"):
+            values = entry.get(key, [])
+            if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
+                raise ValueError(f"{source_id}: {key} must be a list of nonempty strings")
         feeds[source_id] = {
             "name": source_id,
             "desired_roles": "Paid job vacancies; Pro evaluates fit against the candidate profile",

@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -14,6 +15,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from html.entities import name2codepoint
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
 
@@ -98,14 +100,37 @@ def plain_text(value: str, base: str, *, html: bool = True) -> str:
     return "\n".join(" ".join(line.split()) for line in value.splitlines() if line.strip())
 
 
-def parse_feed(raw: bytes, feed_url: str) -> list[dict]:
+def _repair_html_entities(raw: bytes) -> bytes:
+    """Translate known HTML entities to XML character references, outside CDATA.
+
+    Some publishers emit &rsquo; in XML text. Unknown entities and structural
+    XML errors still fail parsing; the original response is always retained.
+    """
+    def replace(match):
+        name = match[1].decode("ascii")
+        if name in ("amp", "lt", "gt", "quot", "apos") or name not in name2codepoint:
+            return match[0]
+        return f"&#{name2codepoint[name]};".encode()
+
+    parts = re.split(rb"(<!\[CDATA\[.*?\]\]>|<!--.*?-->)", raw, flags=re.DOTALL)
+    return b"".join(part if i % 2 else re.sub(rb"&([A-Za-z][A-Za-z0-9]+);", replace, part)
+                    for i, part in enumerate(parts))
+
+
+def parse_feed(raw: bytes, feed_url: str, *, allow_empty: bool = False,
+               repair_html_entities: bool = False) -> list[dict]:
     """Normalize RSS 1/2 and Atom without fetching linked pages or inventing dates."""
+    if repair_html_entities:
+        raw = _repair_html_entities(raw)
     parsed = feedparser.parse(raw, response_headers={"content-location": feed_url,
                                                    "content-type": "application/xml"})
     if parsed.bozo or not parsed.version.startswith(("rss", "atom")):
         raise ValueError(f"invalid RSS/Atom feed: {parsed.get('bozo_exception', parsed.version)}")
-    if not parsed.entries:
+    if not parsed.entries and not allow_empty:
         raise ValueError("empty feed: not a successful job inventory")
+    if not parsed.entries and (not parsed.feed.get("title") or
+                               not _web_url(parsed.feed.get("link", ""), feed_url)):
+        raise ValueError("empty feed needs channel metadata")
     items = {}
     for entry in parsed.entries:
         url = _web_url(entry.get("link", ""), feed_url)
@@ -118,17 +143,28 @@ def parse_feed(raw: bytes, feed_url: str) -> list[dict]:
                     entry.get("summary_detail", {}))
         description = plain_text(body.get("value", ""), url,
                                  html=body.get("type") != "text/plain")
-        content = f"{title}\n{url}\n\n{description}".strip()
+        categories = sorted({plain_text(tag.get("term", ""), url)
+                             for tag in entry.get("tags", []) if tag.get("term")})
+        category_line = f"\nCategories: {', '.join(categories)}" if categories else ""
+        content = f"{title}\n{url}{category_line}\n\n{description}".strip()
         published = entry.get("published_parsed")
         posted_at = (datetime.fromtimestamp(calendar.timegm(published), timezone.utc)
                      .strftime("%Y-%m-%dT%H:%M:%SZ")) if published else None
         item = {"source_id": str(external_id), "url": url, "title": title,
-                "content": content, "posted_at": posted_at, "content_hash": _digest(content)}
+                "content": content, "posted_at": posted_at, "content_hash": _digest(content),
+                "categories": categories}
         # Repeated identical entries are harmless; conflicting identities need inspection.
         if external_id in items and items[external_id]["content_hash"] != item["content_hash"]:
             raise ValueError(f"conflicting entries for {external_id}")
         items[external_id] = item
     return list(items.values())
+
+
+def _selected(item: dict, feed: dict) -> bool:
+    prefixes = feed.get("include_title_prefixes", [])
+    categories = {value.casefold() for value in feed.get("include_categories", [])}
+    return ((not prefixes or item["title"].casefold().startswith(tuple(p.casefold() for p in prefixes)))
+            and (not categories or bool(categories.intersection(c.casefold() for c in item["categories"]))))
 
 
 def fetch_feed(url: str, previous: dict) -> tuple[bytes | None, dict]:
@@ -151,7 +187,7 @@ def fetch_feed(url: str, previous: dict) -> tuple[bytes | None, dict]:
                              "response_url": response.geturl()}
         except urllib.error.HTTPError as error:
             if error.code == 304:
-                if not previous.get("items"):
+                if not previous.get("retrieved_at"):
                     raise ValueError("304 received without a previously ingested feed") from error
                 return None, {}
             if error.code != 429 and not 500 <= error.code < 600:
@@ -178,14 +214,22 @@ def poll_feed(feed: dict, state_dir: Path) -> dict:
     try:
         index_path = directory / "index.json"
         index = json.loads(index_path.read_text()) if index_path.exists() else {"items": {}}
-        raw, response = fetch_feed(feed["url"], index)
-        counts = {"new": 0, "changed": 0, "unchanged": 0, "queued": 0}
+        selection = {key: feed.get(key) for key in
+                     ("include_title_prefixes", "include_categories", "allow_empty", "repair_html_entities")}
+        # Reconsider entries after a config change, even if the server's XML is unchanged.
+        raw, response = fetch_feed(feed["url"], index if index.get("selection") == selection else {})
+        counts = {"new": 0, "changed": 0, "unchanged": 0, "queued": 0, "filtered": 0}
         if raw is not None:
             raw_path = directory / "raw" / f"{_digest(raw)}.xml"
             if not raw_path.exists():
                 atomic_write(raw_path, raw)
-            items = parse_feed(raw, response.get("response_url", feed["url"]))
+            items = parse_feed(raw, response.get("response_url", feed["url"]),
+                               allow_empty=feed.get("allow_empty", False),
+                               repair_html_entities=feed.get("repair_html_entities", False))
             for item in items:
+                if not _selected(item, feed):
+                    counts["filtered"] += 1
+                    continue
                 key = _digest(item["source_id"])
                 previous = index["items"].get(key, {})
                 changed = previous.get("content_hash") != item["content_hash"]
@@ -201,6 +245,7 @@ def poll_feed(feed: dict, state_dir: Path) -> dict:
                                 "message_id": msg_id, "url": item["url"],
                                 "ts": now, "posted_at": item["posted_at"],
                                 "content_hash": item["content_hash"], "change": "changed" if previous else "new"}
+                        meta["categories"] = item["categories"]
                         atomic_write(queue_path, json.dumps({"content": item["content"], "meta": meta}).encode())
                         write_audit({"msg_id": msg_id, "source": "rss", "feed_id": source,
                                      "sender": feed["name"], "preview": item["title"],
@@ -212,7 +257,8 @@ def poll_feed(feed: dict, state_dir: Path) -> dict:
                 index["items"][key] = {**item, "job_id": job_id, "msg_id": msg_id,
                                        "first_seen": previous.get("first_seen", now), "last_seen": now}
             index.update(response)
-            index.update(url=feed["url"], raw_file=str(raw_path.relative_to(state_dir)), retrieved_at=now)
+            index.update(url=feed["url"], raw_file=str(raw_path.relative_to(state_dir)),
+                         retrieved_at=now, selection=selection)
             # Missing entries are retained: a feed is a window, not a complete inventory.
             _write_json(index_path, index)
         status = {"ok": True, "at": now, "not_modified": raw is None, **counts}

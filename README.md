@@ -60,8 +60,23 @@ Channel descriptions live in `state/channels.json` — each entry specifies what
 
 ### RSS/Atom feeds
 
-Start with [FOSSJobs](https://www.fossjobs.net/rss/all/), whose public feed includes
-full descriptions. RSS 1.0/RDF, RSS 2.0, and Atom use the same collector.
+RSS 1.0/RDF, RSS 2.0, and Atom use the same collector.
+[feeds.json.example](feeds.json.example) includes six enabled presets:
+
+| Feed | Intake behavior |
+| --- | --- |
+| [FOSSJobs](https://www.fossjobs.net/rss/all/) | Full feed descriptions |
+| [FSF](https://www.fsf.org/resources/jobs/RSS/) | Only titles beginning with “Job opportunity:”; excludes volunteer and information entries |
+| [Open Source JobHub](https://opensourcejobhub.com/rss/) | Full feed descriptions |
+| [We Work Remotely](https://weworkremotely.com/remote-jobs.rss) | Locally selects programming and DevOps categories; preserves category labels for triage |
+| [NoDesk](https://nodesk.co/remote-jobs/index.xml) | Feed descriptions; explicitly repairs known HTML named entities in XML text |
+| [Tails](https://tails.net/jobs/index.rss) | Allows a valid empty feed between openings; never infers closures |
+
+All six endpoints were fetched successfully on 2026-10-18 (Asia/Nicosia).
+Tails had no entries. Availability and feed contents can change; failures remain
+visible in health checks. WWR category labels are publisher-supplied, so triage
+still checks the actual job. FSF and NoDesk may provide summaries rather than
+full postings; source links are retained.
 
 ```bash
 jobsmcp/bin/python3 -m pip install -r requirements.txt
@@ -71,16 +86,27 @@ jobsmcp/bin/python3 rss_poller.py
 ./audit rss --content
 ```
 
-The collector queues **all currently available entries on its first run**. The
+Review enabled sources before running: the collector queues **all currently
+available entries matching each feed's filters on its first run**. The
 existing `job-triage` timer evaluates them against `state/it-jobs-criteria.md` and
 delivers matches; `/briefme` and weekly reporting include feed content. Feed titles,
-original URLs, and application links are preserved. No linked-page crawling is needed.
+original URLs, and application links are preserved. The collector does not crawl linked pages.
 
 Add another object to `state/feeds.json` with a unique stable `id`, `name`, and `url`;
 `desired_roles` and `acceptable_roles` tune Flash. Set `enabled` to `false` to pause
 both polling and pending triage for that feed. Missing configuration disables RSS.
+For an existing deployment, merge the additional presets into its existing
+configuration; installation preserves that file.
 
-`setup.sh` seeds the FOSSJobs configuration on fresh installs and generates
+Optional selectors `include_title_prefixes` and `include_categories` are lists
+matched without regard to case (categories match exactly). Empty lists accept all
+titles/categories. When both are present, both must match. Changing selectors
+forces a fresh fetch so newly included entries are reconsidered.
+`repair_html_entities` is enabled only for NoDesk's known publisher defect;
+unknown entities and malformed XML still fail. `allow_empty` is enabled only for
+Tails; other empty feeds remain errors. Neither option changes stored raw responses.
+
+`setup.sh` seeds these presets on fresh installs and generates
 `rss-poll.service` / `rss-poll.timer`, scheduled daily at **06:10 host local time**.
 Existing deployments need the new unit installed and enabled; editing this repository
 alone does not activate it. `./setup.sh` installs the new timer through the existing
@@ -94,9 +120,23 @@ in the index and are never inferred closed. This first channel does not attempt
 cross-feed duplicate matching or a full job catalog/export.
 
 HTTP fetching uses conditional requests, timeouts, a 2 MiB response limit, and bounded
-retries. Malformed, empty, or blocked feeds fail independently without advancing their
+retries. Malformed, unexpectedly empty, or blocked feeds fail independently without advancing their
 index. `./audit --health` reports feed failures and polls older than 48 hours.
 Raw snapshots and the index are retained without automatic pruning.
+
+Run the isolated RSS tests with:
+
+```bash
+jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_e2e tests.test_system_setup -v
+```
+
+The process-level tests launch the collector, triage worker and audit CLI in a
+temporary project with a loopback HTTP server. They verify delivery, unchanged
+reruns (HTTP 200 and 304), changed revisions, source failure isolation and recovery
+from a model outage. External API endpoints are redirected by the test harness;
+no real model calls or Telegram messages are made. CI discovers these tests
+automatically. Live deployment credentials and service availability still need
+the existing setup verification and delivery canary.
 
 ### `/briefme` agent
 

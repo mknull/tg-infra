@@ -298,7 +298,7 @@ def main() -> None:
         }
         if source_type == "rss":
             record.update({key: meta.get(key) for key in
-                           ("feed_id", "source_id", "job_id", "url", "posted_at", "content_hash", "change")})
+                           ("feed_id", "source_id", "job_id", "url", "posted_at", "content_hash", "change", "categories")})
 
         # An unreachable endpoint means this is not a valid batch: stop, leave
         # this message and every one after it in the queue, seal nothing, and let
