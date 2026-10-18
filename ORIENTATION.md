@@ -19,7 +19,9 @@ See [README.md](README.md) for architecture and [CLAUDE.md](CLAUDE.md) for devel
   Several tests overwrite/delete runtime state; browser tests can contact services.
   Installer tests stub dependency installation, Docker, and systemd. The full suite is not offline.
 - **Known documentation gaps (2026-10-17):** the local wiki describes tracing/replay/probe tools absent from this checkout.
-  Flash loads direction deltas; Telegram Pro does not explicitly load current direction.
+  Matching setup is described in README's “Matching setup” section. Flash and Pro
+  now consume direction updates; `state/current-direction.json` is authoritative
+  when present, with legacy Markdown fallback.
   Check implementation before relying on these descriptions.
 - **Existing work:** inspect Git status before editing; preserve local changes and untracked notes.
   Their presence does not establish whether they are finished or authoritative.

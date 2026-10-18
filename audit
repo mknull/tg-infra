@@ -13,7 +13,8 @@ import os
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from lib.sources import JOB_AUDIT_FILES, load_feeds
+from lib.sources import JOB_AUDIT_FILES
+from lib.rss_audit import check_rss_health
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(PROJECT, "state")
@@ -701,11 +702,25 @@ def main():
         small_file = os.path.join(STATE, "current-direction-small.md")
         dir_exists = os.path.exists(direction_file)
         small_exists = os.path.exists(small_file)
-        if dir_exists != small_exists:
+        record_file = os.path.join(STATE, "current-direction.json")
+        if os.path.exists(record_file):
+            try:
+                with open(record_file) as stream:
+                    direction = json.load(stream)
+                if not all(isinstance(direction.get(key), str) and direction[key].strip()
+                           for key in ("full", "small", "revision")):
+                    raise ValueError("incomplete preference version")
+                if len(direction["full"]) > 3000 or len(direction["small"]) > 600:
+                    raise ValueError("preference text exceeds prompt size limits")
+                print(f"{GREEN}direction: clean (version {direction['revision']}){RESET}")
+            except (ValueError, OSError, TypeError) as exc:
+                print(f"{RED}DIRECTION INVALID{RESET}: {exc}")
+                exit_code = 1
+        elif dir_exists != small_exists:
             print(f"{RED}DIRECTION MISMATCH{RESET}: one direction file exists "
                   f"without the other (full={dir_exists}, small={small_exists})")
             exit_code = 1
-        if dir_exists and small_exists:
+        elif dir_exists and small_exists:
             dir_mtime = os.path.getmtime(direction_file)
             small_mtime = os.path.getmtime(small_file)
             dir_size = os.path.getsize(direction_file)
@@ -759,27 +774,14 @@ def main():
         else:
             print(f"{DIM}poller: no heartbeat yet{RESET}")
 
-        # Daily feeds have independent fetch status, including failed/empty responses.
-        try:
-            feeds = load_feeds(Path(STATE) / "feeds.json")
-            for feed in feeds.values():
-                if not feed.get("enabled", True):
-                    continue
-                status_file = Path(STATE) / "rss" / feed["id"] / "status.json"
-                if not status_file.exists():
-                    print(f"{RED}RSS {feed['id']}: never polled{RESET}")
-                    exit_code = 1
-                    continue
-                status = json.loads(status_file.read_text())
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(status["at"].replace("Z", "+00:00"))).total_seconds()
-                if not status["ok"] or age > 48 * 3600:
-                    detail = status.get("error", "last successful poll over 48 hours ago")
-                    print(f"{RED}RSS {feed['id']}: {detail}{RESET}")
-                    exit_code = 1
-                else:
-                    print(f"{GREEN}RSS {feed['id']}: fetched {age / 3600:.1f}h ago{RESET}")
-        except (ValueError, KeyError, TypeError, OSError) as error:
-            print(f"{RED}RSS health: {error}{RESET}")
+        # RSS reconciles polling, durable arrivals, evaluations and delivery by
+        # revision ID. Unfinished work must not disappear outside --days.
+        rss_info, rss_problems = check_rss_health(Path(STATE), since=datetime.fromisoformat(since))
+        for line in rss_info:
+            print(f"{DIM}{line}{RESET}")
+        for line in rss_problems:
+            print(f"{RED}{line}{RESET}")
+        if rss_problems:
             exit_code = 1
 
         # --- installed unit ExecStart paths resolve ---
@@ -815,6 +817,8 @@ def main():
 
         # --- per-source cascade health ---
         for src in SOURCES:
+            if src == "rss":
+                continue  # Checked across the full lifecycle above.
             records = load_records(src, since=since)
             if src == "briefme":
                 total = len(records)
@@ -1048,7 +1052,11 @@ def main():
         if args.summary:
             print_summary(records, src, feedback)
         else:
-            unique, dupes, wasted = count_duplicates(records)
+            # An RSS arrival followed by its evaluation is normal, not a
+            # duplicate evaluation. Changed descriptions have distinct IDs.
+            evaluated = ([r for r in records if "flash" in r or "pro" in r]
+                         if src == "rss" else records)
+            unique, dupes, wasted = count_duplicates(evaluated)
             src_label = f"{src} ({len(records)} records"
             if dupes:
                 src_label += f", {BOLD}{RED}{dupes} msgs re-evaluated ({wasted} wasted calls){RESET}"

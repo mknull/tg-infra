@@ -81,7 +81,7 @@ async def poll_channel(client: TelegramClient, channel: dict) -> None:
 
         preview = msg.text.split("\n")[0][:120]
         arrival = {
-            "msg_id": f"{ts}-{queue_prefix}-{msg.id}",
+            "msg_id": f"{ts}-{username}-{msg.id}",
             "source": username,
             "sender": sender,
             "preview": preview,

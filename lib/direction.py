@@ -1,11 +1,16 @@
 """CurrentDirection — user preferences updated by feedback."""
 
 import logging
+import fcntl
+import hashlib
+import json
 import time
+from contextlib import contextmanager
 
 from .api import call_deepseek
 from .audit import write_audit
 from .config import STATE_DIR, FLASH_MODEL, PRO_MODEL
+from .state import write_cursor
 
 DIRECTION_FILE = STATE_DIR / "current-direction.md"
 DIRECTION_SMALL_FILE = STATE_DIR / "current-direction-small.md"
@@ -39,40 +44,70 @@ _UPDATE_PROMPT = (
 )
 
 
+def direction_record_path():
+    return DIRECTION_FILE.with_suffix(".json")
+
+
+@contextmanager
+def direction_lock():
+    """Serialize feedback updates, including their read/generate/publish sequence."""
+    DIRECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with (DIRECTION_FILE.parent / ".direction.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield
+
+
+def load_direction_pair() -> tuple[str, str]:
+    """The JSON record is authoritative; support existing text-only installs."""
+    record = direction_record_path()
+    if record.exists():
+        data = json.loads(record.read_text())
+        return data["full"], data["small"]
+    full = DIRECTION_FILE.read_text().strip() if DIRECTION_FILE.exists() else ""
+    small = DIRECTION_SMALL_FILE.read_text().strip() if DIRECTION_SMALL_FILE.exists() else ""
+    # A legacy failed compression must not silently leave Flash on stale preferences.
+    if full and (not small or DIRECTION_FILE.stat().st_mtime > DIRECTION_SMALL_FILE.stat().st_mtime):
+        small = full
+    return full, small
+
+
 def load_current_direction() -> str:
-    """Read the full CurrentDirection file. Returns empty string if missing."""
-    try:
-        return DIRECTION_FILE.read_text().strip()
-    except FileNotFoundError:
-        return ""
+    return load_direction_pair()[0]
 
 
 def load_current_direction_small() -> str:
     """Read the compressed CurrentDirection file."""
-    try:
-        return DIRECTION_SMALL_FILE.read_text().strip()
-    except FileNotFoundError:
+    return load_direction_pair()[1]
+
+
+def direction_context(*, small: bool = False) -> str:
+    text = load_current_direction_small() if small else load_current_direction()
+    if not text or text == "no change":
         return ""
+    return ("\n\nCurrent preference deltas (explicit user preferences):\n"
+            "These newer preferences override conflicting base profile, role preferences "
+            "and criteria. Retain base preferences that they do not contradict.\n" + text)
 
 
-def compress_current_direction(full_text: str, api_key: str) -> str:
-    """Compress full direction into 1-2 sentences for Flash. Saves to disk."""
+def compress_current_direction(full_text: str, api_key: str, *, persist: bool = True) -> str:
+    """Compress preferences; generation can be staged without changing live state."""
     if not full_text.strip():
-        compressed = "no change"
+        return "no change"
     else:
         raw = call_deepseek(FLASH_MODEL,
                             _COMPRESS_PROMPT.format(full=full_text), api_key,
                             timeout=30)
         compressed = raw.strip()
-
-    DIRECTION_SMALL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DIRECTION_SMALL_FILE.write_text(compressed + "\n")
+        if not compressed or compressed == "no change":
+            raise ValueError("Direction compression returned no usable preferences")
+    if persist:
+        with direction_lock():
+            save_direction_pair(full_text, compressed)
     return compressed
 
 
-def update_current_direction(feedback: str, api_key: str) -> str:
-    """Update CurrentDirection from user feedback. Returns new full text."""
-    current = load_current_direction()
+def prepare_direction(feedback: str, api_key: str, current: str) -> tuple[str, str]:
+    """Prepare both forms before either is made visible to consumers."""
     if current:
         prompt = _UPDATE_PROMPT.format(current=current, feedback=feedback)
     else:
@@ -85,18 +120,43 @@ def update_current_direction(feedback: str, api_key: str) -> str:
 
     raw = call_deepseek(PRO_MODEL, prompt, api_key, timeout=60)
     new_direction = raw.strip()
+    if not new_direction:
+        raise ValueError("Direction update returned empty preferences")
+    compressed = compress_current_direction(new_direction, api_key, persist=False)
+    return new_direction, compressed
 
-    DIRECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DIRECTION_FILE.write_text(new_direction + "\n")
-    logging.info("CurrentDirection updated (%d chars)", len(new_direction))
 
-    compress_current_direction(new_direction, api_key)
+def direction_updates(full: str, small: str) -> dict:
+    if not isinstance(full, str) or not full.strip() or not isinstance(small, str) or not small.strip():
+        raise ValueError("Both direction forms must be nonempty text")
+    revision = hashlib.sha256((full + "\0" + small).encode()).hexdigest()[:16]
+    return {DIRECTION_FILE: full + "\n", DIRECTION_SMALL_FILE: small + "\n",
+            direction_record_path(): json.dumps({"revision": revision, "full": full, "small": small}) + "\n"}
 
-    DIRECTION_AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    write_audit({
-        "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "feedback": feedback,
-        "direction_chars": len(new_direction),
-    }, DIRECTION_AUDIT_FILE)
 
+def save_direction_pair(full: str, small: str) -> None:
+    updates = direction_updates(full, small)
+    # One atomic replacement publishes both forms. Text files are compatibility exports.
+    write_cursor(direction_record_path(), updates.pop(direction_record_path()))
+    for path, content in updates.items():
+        try:
+            write_cursor(path, content)
+        except OSError:
+            logging.exception("Direction saved, but could not refresh export %s", path.name)
+
+
+def update_current_direction(feedback: str, api_key: str) -> str:
+    """Publish a complete preference version; a model failure leaves it unchanged."""
+    with direction_lock():
+        new_direction, compressed = prepare_direction(feedback, api_key, load_current_direction())
+        save_direction_pair(new_direction, compressed)
+    try:
+        DIRECTION_AUDIT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        write_audit({
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "feedback": feedback,
+            "direction_chars": len(new_direction),
+        }, DIRECTION_AUDIT_FILE)
+    except OSError:
+        logging.exception("Direction saved, but audit write failed")
     return new_direction

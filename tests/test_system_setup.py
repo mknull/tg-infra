@@ -84,10 +84,12 @@ class TestSetupScript(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmpdir, ignore_errors=True)
 
-    def test_setup_exits_clean(self):
-        """Setup completes without error."""
-        self.assertEqual(self.exit_code, 0,
+    def test_incomplete_setup_does_not_claim_success(self):
+        """A scaffold without credentials or preferences is not an activated install."""
+        self.assertEqual(self.exit_code, 1,
                          f"setup.sh failed:\n{self.output[-1000:]}")
+        self.assertIn("Matching setup incomplete", self.output)
+        self.assertNotIn("the system is LIVE", self.output)
 
     def test_creates_env_template(self):
         """.env contains all required keys."""
@@ -121,7 +123,7 @@ class TestSetupScript(unittest.TestCase):
             timeout=30,
             env=self.env,
             input="n\nn\nn\n")
-        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 1)
         self.assertIn("SKIP", result.stdout)
 
     def test_creates_systemd_units(self):
@@ -153,6 +155,86 @@ class TestSetupScript(unittest.TestCase):
         svc = (self.systemd / "bot-commands.service").read_text()
         self.assertNotIn("/home/filippos", svc)
         self.assertIn(str(self.project), svc)
+
+    def _configured_install(self, invalid_json=False):
+        """Run the real installer + generator in a child process; stub external edges."""
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        tmp = Path(temporary.name)
+        project = tmp / "project"
+        shutil.copytree(self.project, project)
+        state = project / "state"
+        (state / ".env").write_text("DEEPSEEK_API_KEY=fake-key\nUSER_NAME=Jane\nTELEGRAM_CHAT_ID=1\n"
+                                    "TELEGRAM_BOT_TOKEN=fake\nTELEGRAM_API_ID=1\nTELEGRAM_API_HASH=fake\n")
+        channels = json.loads((state / "channels.json").read_text())
+        channels["channels"][0]["username"] = "design_jobs"
+        (state / "channels.json").write_text(json.dumps(channels))
+        (state / "it-jobs-session.session").touch()
+        (state / "outlook-token.json").write_text("{}")
+        docs = tmp / "documents"
+        docs.mkdir()
+        (docs / "cv.txt").write_text("Jane is an accessibility designer and user researcher.")
+        # Replaces model calls only; prompt assembly, validation and persistence stay real.
+        (project / "sitecustomize.py").write_text('''
+import json
+from pathlib import Path
+import lib
+import lib.direction
+def fake_model(model, prompt, key, timeout=90):
+    with Path("model-calls").open("a") as stream:
+        stream.write("call\\n")
+    if "List every fact" in prompt:
+        return "Jane: accessibility designer, user research."
+    if "career analyst" in prompt:
+        return "\\n".join("###FILE: " + name + "###\\nJane: accessibility designer, user research."
+                         for name in ("interests.txt", "skills.txt", "tech_stack.txt"))
+    if "Generate Flash" in prompt:
+        if Path("invalid-model-response").exists():
+            return "invalid JSON"
+        sources = json.loads(prompt.split("SOURCES:\\n", 1)[1].split("\\n\\nReturn ONLY JSON:", 1)[0])
+        return json.dumps({"sources": [{"id": s["id"], "desired_roles": "Accessibility designer",
+                            "acceptable_roles": "User researcher"} for s in sources]})
+    return "# Candidate Profile\\nJane: accessibility design and research."
+lib.call_deepseek = fake_model
+lib.direction.call_deepseek = fake_model
+''')
+        (project / "setup_verify.py").write_text(
+            'from pathlib import Path\nPath("verification-called").touch()\n')
+        commands = tmp / "bin"
+        commands.mkdir()
+        (commands / "systemctl").write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SETUP_TEST_SYSTEMCTL_LOG"\n')
+        (commands / "systemctl").chmod(0o755)
+        env = {**self.env, "PYTHONPATH": str(project), "XDG_CONFIG_HOME": str(tmp / "config"),
+               "PATH": str(commands) + os.pathsep + self.env["PATH"],
+               "SETUP_TEST_SYSTEMCTL_LOG": str(tmp / "systemctl.log")}
+        if invalid_json:
+            (project / "invalid-model-response").touch()
+        result = subprocess.run(["bash", str(project / "setup.sh")], cwd=project,
+                                env=env, input=f"y\n{docs}\n\n{'l' if invalid_json else 'a'}\n",
+                                capture_output=True, text=True, timeout=30)
+        return project, env, result
+
+    def test_install_apply_then_reinstall_keep(self):
+        project, env, result = self._configured_install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue((project / "verification-called").exists())
+        self.assertIn("enable --now job-triage.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
+        roles = json.loads((project / "state/channels.json").read_text())["channels"][0]
+        self.assertEqual(roles["desired_roles"], "Accessibility designer")
+        calls = (project / "model-calls").read_bytes()
+        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
+                               input="\n", capture_output=True, text=True, timeout=30)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual((project / "model-calls").read_bytes(), calls)
+
+    def test_install_model_failure_does_not_activate_or_verify(self):
+        project, env, result = self._configured_install(invalid_json=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertFalse((project / "verification-called").exists())
+        self.assertNotIn("enable --now", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
+        self.assertIn("invalid JSON", result.stderr)
+        self.assertIn("invalid JSON", (project / "state/setup.log").read_text())
+        self.assertFalse((project / "source/interests.txt").exists())
 
 
 if __name__ == "__main__":

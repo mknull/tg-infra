@@ -113,10 +113,12 @@ def aggregate(tagged: list[dict]) -> dict:
 def build_report(profile: str, agg: dict, sends: list[dict],
                  api_key: str) -> str:
     """Ask DeepSeek Pro to write a trend report from the aggregation."""
+    from lib.direction import direction_context
     prompt = (
         "You are a job market analyst. Below is a raw aggregation of structured tags "
         f"from {agg['total_tagged']} job postings and emails evaluated over the past 7 days.\n\n"
         f"--- CANDIDATE PROFILE ---\n{profile}\n\n"
+        f"{direction_context()}\n\n"
         "--- WEEKLY AGGREGATION ---\n"
         f"Tagged postings: {agg['total_tagged']}\n"
         f"Matches delivered: {len(sends)}\n\n"
@@ -229,12 +231,12 @@ def _build_smell_section(tagged: list[dict], sends: list[dict],
 def _get_direction_attachments() -> list[dict]:
     """Return CurrentDirection files as email attachments."""
     attachments = []
-    for name in ("current-direction.md", "current-direction-small.md"):
-        path = STATE_DIR / name
-        if path.exists():
+    from lib.direction import load_direction_pair
+    for name, text in zip(("current-direction.md", "current-direction-small.md"), load_direction_pair()):
+        if text:
             attachments.append({
                 "filename": name.replace(".md", ".txt") if "small" in name else name,
-                "content": path.read_text(),
+                "content": text,
             })
     return attachments
 

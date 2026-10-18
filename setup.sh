@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
 VENV="$PROJECT_DIR/jobsmcp"
 PYTHON="$VENV/bin/python3"
 STATE_DIR="$PROJECT_DIR/state"
@@ -166,46 +167,21 @@ fi
 FEEDS_FILE="$STATE_DIR/feeds.json"
 if [[ ! -f "$FEEDS_FILE" ]]; then
     cp "$PROJECT_DIR/feeds.json.example" "$FEEDS_FILE"
-    log "Created $FEEDS_FILE — FOSSJobs RSS enabled; add feeds here"
+    log "Created $FEEDS_FILE — six RSS presets enabled; review sources here"
 else
     skip "feeds.json already exists"
 fi
 
 # ---------- step 7: profile generation ----------
 
-step "Profile generation"
-
-if [[ -f "$STATE_DIR/.env" ]]; then
-    DEEPSEEK_KEY=$("$PYTHON" -c "
-import sys; sys.path.insert(0, '$PROJECT_DIR')
-from lib.config import load_env
-print(load_env().get('DEEPSEEK_API_KEY', ''))
-" 2>/dev/null || true)
-fi
+step "Profile and matching preferences"
 
 SOURCE_DIR="$PROJECT_DIR/source"
-if [[ -d "$SOURCE_DIR" ]] && [[ -f "$SOURCE_DIR/interests.txt" ]]; then
-    skip "source/ already exists"
-    log "To regenerate: $PYTHON generate_profile.py --docs <dir> --name NAME --force"
+MATCHING_READY=false
+if "$PYTHON" "$PROJECT_DIR/generate_profile.py" --setup; then
+    MATCHING_READY=true
 else
-    if [[ -n "${DEEPSEEK_KEY:-}" ]]; then
-        log ""
-        log "Profile generation creates source/interests.txt, skills.txt, tech_stack.txt"
-        log "from your documents (CV, transcripts, theses, letters)."
-        log ""
-        read -p "Generate profile now? (y/N) " -r GEN_REPLY
-        if [[ "$GEN_REPLY" =~ ^[Yy]$ ]]; then
-            read -p "Path to documents directory: " -r DOCS_DIR
-            read -p "Your full name: " -r USER_NAME
-            "$PYTHON" "$PROJECT_DIR/generate_profile.py" \
-                --docs "$DOCS_DIR" --name "$USER_NAME" || log "WARNING: generation failed"
-        else
-            log "Skipped. Run later: $PYTHON generate_profile.py --docs <dir> --name NAME"
-        fi
-    else
-        log "Set DEEPSEEK_API_KEY in .env first, then run:"
-        log "  $PYTHON generate_profile.py --docs <dir> --name NAME"
-    fi
+    log "Matching setup incomplete or deferred. Existing settings remain in use; re-run ./setup.sh to continue."
 fi
 
 # ---------- step 8: Telethon auth ----------
@@ -333,18 +309,19 @@ if [[ -z "${CHAT_ID:-}" ]]; then
 fi
 
 ACTIVATED=false
-if "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
+if $MATCHING_READY && "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
     log "verify passed — activating timers"
+    ACTIVATED=true
     for name in "${!UNITS[@]}"; do
         if systemctl --user enable --now "$name.timer" 2>/dev/null; then
             log "  activated $name.timer"
         else
             skip "could not activate $name.timer"
+            ACTIVATED=false
         fi
     done
-    ACTIVATED=true
 else
-    log "verify did NOT pass — timers left disabled (the system is not live)."
+    log "Activation skipped: matching setup or verification is incomplete. Existing running services were not stopped."
 fi
 
 # ---------- summary ----------
@@ -356,13 +333,10 @@ if $ACTIVATED; then
     log "Re-run ./setup.sh any time; it is idempotent."
     log "Check anytime:  $PYTHON setup_verify.py status"
 else
-    log "Setup scaffolded — NOT live yet. Finish these, then re-run ./setup.sh"
-    log "(idempotent; it will pair, verify, and activate automatically):"
+    log "Setup incomplete — existing services were not stopped. Finish these, then re-run ./setup.sh:"
     log "  1. Fill in $ENV_FILE (leave TELEGRAM_CHAT_ID blank)"
     log "  2. Edit $CHANNELS_FILE with YOUR Telegram channels"
-    if [[ ! -f "$SOURCE_DIR/interests.txt" ]]; then
-        log "  3. Generate your profile: $PYTHON generate_profile.py --docs <dir> --name NAME"
-    fi
+    log "  3. Complete matching setup (Flash preferences and Pro criteria) when prompted"
     if [[ ! -f "$SESSION_FILE" ]]; then
         log "  4. Authenticate Telethon: $PYTHON it_jobs_poller.py"
     fi
@@ -372,3 +346,4 @@ else
     log "  Check status anytime: $PYTHON setup_verify.py status"
 fi
 log "========================================"
+$ACTIVATED || exit 1

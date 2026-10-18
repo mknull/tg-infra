@@ -58,6 +58,29 @@ Pro extracts structured tags (role title, skills, domain, seniority, remote stat
 
 Channel descriptions live in `state/channels.json` — each entry specifies what the channel is about, how messages are formatted, and what roles the user wants vs. will accept. The flash prompt is a fixed template; channel-specific values are interpolated at runtime. No channel-specific code paths.
 
+### Matching setup
+
+Run `./setup.sh` to configure matching, or
+`jobsmcp/bin/python3 generate_profile.py --setup` to review matching settings alone.
+Setup uses your documents and any additional preferences to generate Flash's
+`desired_roles` / `acceptable_roles` for enabled Telegram channels and RSS feeds,
+plus Pro's criteria. It previews the role preferences and criteria changes before
+**Apply / Revise preferences / Later**. Feed subscriptions and intake filters stay
+as configured.
+
+On reinstall, **Keep existing** is the default and makes no model calls.
+**Complete missing setup** fills empty/template fields while keeping personalized
+values. **Regenerate** can reuse the current profile or read updated documents,
+and previews replacements. Existing direction updates are retained.
+
+Malformed Flash JSON or invalid source IDs/fields get one correction attempt.
+Persistent failures are shown in the terminal and `state/setup.log`, with
+**Retry / Later**. No model output is saved until the whole proposal is valid and
+accepted. A deferred or incomplete setup exits nonzero and does not activate new
+timers; existing running services are not stopped. `setup_verify.py status` reports
+missing matching settings. Noninteractive `--stage2-only` fills missing settings;
+adding `--force` explicitly replaces existing generated settings.
+
 ### RSS/Atom feeds
 
 RSS 1.0/RDF, RSS 2.0, and Atom use the same collector.
@@ -122,12 +145,22 @@ cross-feed duplicate matching or a full job catalog/export.
 HTTP fetching uses conditional requests, timeouts, a 2 MiB response limit, and bounded
 retries. Malformed, unexpectedly empty, or blocked feeds fail independently without advancing their
 index. `./audit --health` reports feed failures and polls older than 48 hours.
+For RSS it also reconciles the ingestion index, arrivals, queue, Flash/Pro decisions
+and delivery acknowledgements by message revision. It fails on items unfinished
+after one hour, missing arrivals, invalid/dead-lettered decisions, duplicate
+evaluations or deliveries, and sends without a matching successful delivery result.
+Unfinished items, latest failed evaluations and unacknowledged sends are checked
+even outside `--days`; historical evaluation/duplicate checks use that window.
+Queued items from disabled feeds
+are reported as paused. Poll counters expose source filtering; HTTP 304 is healthy.
+Audit verifies recorded processing and delivery-service acceptance, not relevance
+judgments or vacancies that a publisher never exposed in the configured feed.
 Raw snapshots and the index are retained without automatic pruning.
 
 Run the isolated RSS tests with:
 
 ```bash
-jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_e2e tests.test_system_setup -v
+jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_audit tests.test_rss_e2e tests.test_system_setup -v
 ```
 
 The process-level tests launch the collector, triage worker and audit CLI in a
@@ -146,7 +179,18 @@ Tools are guardrailed: URL validation with trusted-domain fast-path (unknown dom
 
 ### Adaptive direction
 
-The user's profile is generated once from documents, but preferences drift. A `CurrentDirection` file captures deltas ("exploring comp bio," "skip data engineering roles"). The weekly report prompts for corrections. When the user replies or sends `/direction` to the bot, the direction file updates, and both Flash and Pro see the delta in their prompts. Behavior changes without manual prompt editing.
+The user's profile is generated from documents, but preferences drift. The weekly
+report invites corrections through email replies or `/direction`. Flash receives
+the compressed update; Pro receives the full update, for both Telegram/RSS and
+email. Weekly analysis and briefs also receive the full update. Explicit updates
+override conflicting base preferences.
+
+`state/current-direction.json` publishes the full and compressed forms as one
+version. Both must be generated successfully before publication. A failed update
+keeps the previous version and reports the failure. The `.md` direction files
+are compatibility exports; existing installations containing only those files
+are still supported. Use `/direction` or setup to change preferences once the
+JSON version exists.
 
 ### Audit discipline
 

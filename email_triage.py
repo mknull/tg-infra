@@ -17,6 +17,7 @@ from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  call_deepseek, extract_json, send_telegram, deliver, write_audit,
                  setup_logging, read_cursor, write_cursor, graph_get,
                  resolve_monitored_folder, SeenLedger)
+from lib.direction import direction_context
 
 CURSOR_FILE = STATE_DIR / "email-cursor"
 AUDIT_FILE = STATE_DIR / "audit" / "email.jsonl"
@@ -92,6 +93,7 @@ def flash_header_triage(from_addr: str, subject: str, api_key: str) -> tuple[str
     prompt = (
         "You are an email header triage filter. Evaluate this email against the criteria.\n\n"
         f"CRITERIA:\n{criteria}\n\n"
+        f"{direction_context(small=True)}\n\n"
         f"FROM: {from_addr}\nSUBJECT: {subject}\n\n"
         'Respond with ONLY a JSON object: '
         '{"decision": "read" or "skip", "reason": "one sentence"}'
@@ -110,6 +112,7 @@ def pro_body_triage(
     prompt = (
         "You are evaluating an email against a candidate profile.\n\n"
         f"CRITERIA:\n{criteria}\n\n"
+        f"{direction_context()}\n\n"
         f"FROM: {from_addr}\nSUBJECT: {subject}\n\nBODY:\n{body[:8000]}\n\n"
         "Output ONLY a JSON object:\n"
         '{"decision": "send" or "skip", "reason": "one sentence", '

@@ -65,6 +65,7 @@ TOOLS = [
 # --- System prompt ---
 
 def build_system_prompt() -> str:
+    from lib.direction import direction_context
     skill_dir = PROJECT_DIR / "skills" / "job-brief"
     refs_dir = skill_dir / "references"
 
@@ -95,7 +96,8 @@ Workflow:
 {discipline}
 
 ## {USER_NAME}'s career-strategic profile
-{relevance}"""
+{relevance}
+{direction_context()}"""
 
 
 _FALLBACK_SKILL = "Produce a decision-grade brief with role, environment, and relevance sections."

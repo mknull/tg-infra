@@ -325,7 +325,7 @@ def main() -> None:
                     send_message(token, chat_id, f"Updated:\n\n{preview}")
                 except Exception as e:
                     logging.error("[%s] /direction update failed: %s", chat_id, e)
-                    send_message(token, chat_id, "Failed to update direction. Try again.")
+                    send_message(token, chat_id, "Could not update preferences. Your previous preferences remain active. Retry /direction with your update.")
         elif command == "/status":
             send_message(token, chat_id,
                          f"Bot is running. Last update: {cursor}.")

@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -63,6 +64,9 @@ class TestRssCLI(unittest.TestCase):
         self.requests = []
         self.deliveries = []
         self.model_down = False
+        self.pro_answer = {"decision": "send", "reason": "Matches criteria",
+                           "message": "A suitable engineering role.",
+                           "tags": {"role_type": "engineering"}}
         self.conditional = True
         owner = self
 
@@ -100,9 +104,7 @@ class TestRssCLI(unittest.TestCase):
                     if payload["model"] == "deepseek-v4-flash":
                         answer = {"decision": "pass_to_pro", "reason": "Engineering vacancy"}
                     elif payload["model"] == "deepseek-v4-pro":
-                        answer = {"decision": "send", "reason": "Matches criteria",
-                                  "message": "A suitable engineering role.",
-                                  "tags": {"role_type": "engineering"}}
+                        answer = owner.pro_answer
                     else:
                         self.respond(400, b"Unexpected model")
                         return
@@ -208,6 +210,37 @@ class TestRssCLI(unittest.TestCase):
         self.run_cli("it_jobs_triage.py")
         self.assertEqual(self.files("message_queue"), [])
         self.assertEqual(len(self.deliveries), 1)
+
+    def test_audit_follows_pending_stalled_and_recovered_message(self):
+        self.run_cli("rss_poller.py")
+        self.assertIn("1 pending within 1h", self.run_cli("audit", "--health"))
+        # Simulate a worker outage older than audit's default one-day window.
+        old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        arrivals = self.records("audit/rss.jsonl")
+        arrivals[0]["arrived_at"] = old
+        (self.state / "audit/rss.jsonl").write_text(json.dumps(arrivals[0]) + "\n")
+        path, = self.files("message_queue")
+        entry = json.loads(path.read_text())
+        entry["meta"]["ts"] = old
+        path.write_text(json.dumps(entry))
+        self.assertIn("RSS STALLED", self.run_cli("audit", "--health", code=1))
+        self.run_cli("it_jobs_triage.py")
+        self.assertIn("1 evaluated", self.run_cli("audit", "--health"))
+
+    def test_audit_catches_send_that_never_attempted_delivery(self):
+        self.run_cli("rss_poller.py")
+        (self.state / ".env").write_text("DEEPSEEK_API_KEY=fixture\n")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(self.records("audit/rss.jsonl")[-1]["pro"]["decision"], "send")
+        self.assertEqual(self.deliveries, [])
+        self.assertIn("RSS DELIVERY MISSING", self.run_cli("audit", "--health", code=1))
+
+    def test_audit_catches_pro_dead_letter(self):
+        self.pro_answer = "not a decision object"
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(self.records("audit/rss.jsonl")[-1]["pro"]["decision"], "dead_letter")
+        self.assertIn("Pro dead_letter", self.run_cli("audit", "--health", code=1))
 
 
 if __name__ == "__main__":

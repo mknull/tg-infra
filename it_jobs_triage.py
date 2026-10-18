@@ -11,6 +11,7 @@ from lib import (FLASH_MODEL, PRO_MODEL, STATE_DIR,
                  load_env, call_deepseek, extract_json, deliver, write_audit,
                  setup_logging, SeenLedger, TransportError, endpoint_reachable)
 from lib.sources import load_feeds
+from lib.direction import direction_context
 
 QUEUE_DIR = STATE_DIR / "message_queue"
 MESSAGES_DIR = STATE_DIR / "messages"
@@ -57,14 +58,12 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
     while i < total:
         window_end = min(i + 3, total)
         seen = "\n".join(lines[:window_end])
-        direction = _load_direction_small()
         prompt = FLASH_PROMPT.format(
             desired_roles=desired_roles,
             acceptable_roles=acceptable_roles,
             seen=seen,
         )
-        if direction and direction != "no change":
-            prompt += f"\n\nCurrent preference deltas:\n{direction}"
+        prompt += direction_context(small=True)
 
         try:
             raw = call_deepseek(FLASH_MODEL, prompt, api_key)
@@ -127,6 +126,7 @@ def pro_full_eval(content: str, api_key: str) -> tuple[str, str, str, dict]:
     prompt = (
         "You are evaluating a job posting against a candidate profile.\n\n"
         f"CRITERIA:\n{criteria}\n\n"
+        f"{direction_context()}\n\n"
         f"FULL POSTING:\n{content}\n\n"
         "Based on the Stage 2 criteria above, output ONLY a JSON object:\n"
         '{"decision": "send" or "skip", "reason": "one sentence", '
