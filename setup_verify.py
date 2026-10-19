@@ -20,6 +20,7 @@ import urllib.request
 
 from lib import (load_env, STATE_DIR, missing_required,
                  channels_are_placeholder, deliver)
+from lib.matching import matching_gaps
 
 ENV_FILE = STATE_DIR / ".env"
 
@@ -65,6 +66,11 @@ def cmd_require(env: dict) -> int:
         return 1
     if channels_are_placeholder(_load_channels()):
         print("state/channels.json still has the CHANGE_ME template — add your channels.")
+        return 1
+    gaps = matching_gaps(STATE_DIR.parent)
+    if gaps:
+        print("Matching setup incomplete: " + "; ".join(gaps))
+        print("Run ./setup.sh and choose Complete missing setup.")
         return 1
     print("required config: OK")
     return 0
@@ -136,6 +142,8 @@ def cmd_status(env: dict) -> int:
     print(f"required config : {'OK' if not missing else 'MISSING ' + ','.join(missing)}")
     ch = _load_channels()
     print(f"channels       : {'placeholder/none' if channels_are_placeholder(ch) else str(len(ch)) + ' configured'}")
+    gaps = matching_gaps(STATE_DIR.parent)
+    print("matching       : " + ("INCOMPLETE — " + "; ".join(gaps) if gaps else "ready"))
     folder = env.get("OUTLOOK_FOLDER", "").strip()
     print(f"email          : {'disabled (OUTLOOK_FOLDER unset)' if not folder else 'folder=' + folder}")
     print(f"chat id        : {'set' if env.get('TELEGRAM_CHAT_ID', '').strip() else 'NOT paired'}")

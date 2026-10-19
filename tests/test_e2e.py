@@ -166,9 +166,16 @@ class TestCurrentDirectionFlow(unittest.TestCase):
     """Verify direction load → compress → update pipeline."""
 
     def setUp(self):
-        for f in ("current-direction.md", "current-direction-small.md"):
-            (_PROJECT / "state" / f).unlink(missing_ok=True)
-        (_PROJECT / "state" / "audit" / "direction.jsonl").unlink(missing_ok=True)
+        import tempfile
+        from contextlib import ExitStack
+        import lib.direction as direction
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        root = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        for key, name in (("DIRECTION_FILE", "current-direction.md"),
+                          ("DIRECTION_SMALL_FILE", "current-direction-small.md"),
+                          ("DIRECTION_AUDIT_FILE", "audit.jsonl")):
+            stack.enter_context(patch.object(direction, key, root / name))
 
     def test_roundtrip_load_update_compress(self):
         """Full direction lifecycle: create → compress → update."""
@@ -214,23 +221,26 @@ class TestAuditHealthWithSyntheticData(unittest.TestCase):
     def test_detects_duplicate_evals(self):
         """Two evaluations of the same msg_id → flagged as duplicate."""
         self.audit_file.parent.mkdir(parents=True, exist_ok=True)
+        from datetime import datetime, timezone, timedelta
+        first = (datetime.now(timezone.utc) - timedelta(minutes=2)).isoformat()
+        second = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
         base = {
             "msg_id": "test-dup-001",
             "source": "telegram",
             "sender": "test",
             "preview": "Test posting",
-            "arrived_at": "2026-05-30T10:00:00Z",
+            "arrived_at": first,
             "flash": {"model": "flash", "decision": "flag",
-                       "reason": "test", "at": "2026-05-30T10:00:01Z"},
+                       "reason": "test", "at": first},
             "pro": {"model": "pro", "decision": "send",
-                     "reason": "test", "at": "2026-05-30T10:00:02Z"},
+                     "reason": "test", "at": first},
         }
         # Same msg_id, different eval timestamps = duplicate
         self.audit_file.write_text(
             json.dumps({**base, "flash": {**base["flash"],
-                       "at": "2026-05-30T10:00:01Z"}}) + "\n" +
+                       "at": first}}) + "\n" +
             json.dumps({**base, "flash": {**base["flash"],
-                       "at": "2026-05-30T10:01:01Z"}}) + "\n"
+                       "at": second}}) + "\n"
         )
         exit_code = os.system(f"{_PROJECT}/audit --health --days 1 2>/dev/null")
         self.assertNotEqual(0, exit_code, "should detect duplicate evals")

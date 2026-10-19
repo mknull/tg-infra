@@ -1,5 +1,7 @@
 # telegram_MCP
 
+Start here: [repository orientation and safe verification](ORIENTATION.md).
+
 ## Design principle
 
 The jobs pipeline is a **standalone Python application**. It must not depend on Claude Code, the Claude CLI, or any Anthropic-specific tooling being present. LLM calls go through the DeepSeek API (raw HTTP) so the scripts run in any environment — cron, systemd, CI, a server — without a Claude Code session.
@@ -11,6 +13,7 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 ## Scripts
 
 - `it_jobs_poller.py` — Telethon poller: reads Telegram groups via user API, writes to `state/message_queue/`
+- `rss_poller.py` — RSS/Atom poller: configured in `state/feeds.json`, persistent per-feed index, writes to the same queue
 - `it_jobs_triage.py` — Two-model triage: incremental 3-line Flash → Pro full eval → delivery
 - `email_triage.py` — Outlook Graph API → Flash header filter → Pro body eval → delivery
 - `bot_commands.py` — Telegram bot: /briefme, /direction, /start, /status, /help
@@ -24,10 +27,15 @@ All scripts use the `jobsmcp` venv: `jobsmcp/bin/python3`. Add dependencies to `
 
 ## Tests
 
-242 tests across 21 files in `tests/`. Run with:
+Tests live in `tests/`. Run the suite in a disposable copy (some older tests modify project state):
 ```
 jobsmcp/bin/python3 -m unittest discover -s tests -t . -p 'test_*.py'
 ```
+
+The RSS fixtures, process-level pipeline and installer tests use temporary state
+and mocked or loopback external services:
+`jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_e2e tests.test_system_setup`.
+The process-level tests require permission to bind a loopback socket.
 
 CI runs the full suite + `./audit --health` on every push.
 

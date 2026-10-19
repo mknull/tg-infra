@@ -175,12 +175,16 @@ class TestDirectionDeltaInProPrompt(unittest.TestCase):
         self.full_file.write_text(
             "You are prioritizing ML research. Explore comp bio.")
 
-        # pro_full_eval reads CRITERIA_FILE which is state/it-jobs-criteria.md
-        # CurrentDirection would be prepended in a future implementation.
-        # For now, verify the function is importable and the criteria
-        # file path is correct.
-        self.assertTrue(self.triage.CRITERIA_FILE.exists() or True,
-                        "criteria file expected at state/it-jobs-criteria.md")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            criteria = Path(tmp) / "criteria.md"
+            criteria.write_text("Candidate Profile: broad research roles.")
+            with patch.object(self.triage, "CRITERIA_FILE", criteria), patch.object(
+                    self.triage, "call_deepseek", return_value='{"decision":"skip","reason":"test"}') as model:
+                self.triage.pro_full_eval("Example vacancy", "fake-key")
+            prompt = model.call_args.args[1]
+            self.assertIn("Explore comp bio", prompt)
+            self.assertIn("override conflicting", prompt)
 
     def test_full_direction_loads_from_disk(self):
         """CurrentDirection loads correctly from disk."""

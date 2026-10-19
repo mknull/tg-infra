@@ -2,6 +2,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_DIR"
 VENV="$PROJECT_DIR/jobsmcp"
 PYTHON="$VENV/bin/python3"
 STATE_DIR="$PROJECT_DIR/state"
@@ -163,41 +164,24 @@ else
     skip "channels.json already exists"
 fi
 
-# ---------- step 7: profile generation ----------
-
-step "Profile generation"
-
-if [[ -f "$STATE_DIR/.env" ]]; then
-    DEEPSEEK_KEY=$("$PYTHON" -c "
-import sys; sys.path.insert(0, '$PROJECT_DIR')
-from lib.config import load_env
-print(load_env().get('DEEPSEEK_API_KEY', ''))
-" 2>/dev/null || true)
+FEEDS_FILE="$STATE_DIR/feeds.json"
+if [[ ! -f "$FEEDS_FILE" ]]; then
+    cp "$PROJECT_DIR/feeds.json.example" "$FEEDS_FILE"
+    log "Created $FEEDS_FILE — RSS presets await your reviewed selection during matching setup"
+else
+    skip "feeds.json already exists"
 fi
 
+# ---------- step 7: profile generation ----------
+
+step "Profile and matching preferences"
+
 SOURCE_DIR="$PROJECT_DIR/source"
-if [[ -d "$SOURCE_DIR" ]] && [[ -f "$SOURCE_DIR/interests.txt" ]]; then
-    skip "source/ already exists"
-    log "To regenerate: $PYTHON generate_profile.py --docs <dir> --name NAME --force"
+MATCHING_READY=false
+if "$PYTHON" "$PROJECT_DIR/generate_profile.py" --setup; then
+    MATCHING_READY=true
 else
-    if [[ -n "${DEEPSEEK_KEY:-}" ]]; then
-        log ""
-        log "Profile generation creates source/interests.txt, skills.txt, tech_stack.txt"
-        log "from your documents (CV, transcripts, theses, letters)."
-        log ""
-        read -p "Generate profile now? (y/N) " -r GEN_REPLY
-        if [[ "$GEN_REPLY" =~ ^[Yy]$ ]]; then
-            read -p "Path to documents directory: " -r DOCS_DIR
-            read -p "Your full name: " -r USER_NAME
-            "$PYTHON" "$PROJECT_DIR/generate_profile.py" \
-                --docs "$DOCS_DIR" --name "$USER_NAME" || log "WARNING: generation failed"
-        else
-            log "Skipped. Run later: $PYTHON generate_profile.py --docs <dir> --name NAME"
-        fi
-    else
-        log "Set DEEPSEEK_API_KEY in .env first, then run:"
-        log "  $PYTHON generate_profile.py --docs <dir> --name NAME"
-    fi
+    log "Matching setup incomplete or deferred. Existing settings remain in use; re-run ./setup.sh to continue."
 fi
 
 # ---------- step 8: Telethon auth ----------
@@ -255,6 +239,7 @@ UNITS=(
     # oneshot unit then stays "activating" forever, and the timer skips every
     # later fire. systemd killing the hung run lets the next fire backfill.
     [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it_jobs_poller.py|15min"
+    [rss-poll]="Poll RSS and Atom job feeds|*-*-* *:10:00|$PYTHON $PROJECT_DIR/rss_poller.py --due|15min"
     [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it_jobs_triage.py"
     [email-ingest]="Fetch and triage Outlook emails|*-*-* 0/2:45:00|$PROJECT_DIR/email-ingest-wrap"
     [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly_trend.py"
@@ -263,14 +248,14 @@ UNITS=(
     [delivery-canary]="Synthetic delivery check (audit --health alerts if it breaks)|*-*-* *:10:00|$PYTHON $PROJECT_DIR/delivery_canary.py"
 )
 
+RSS_UNITS_UPDATED=false
 for name in "${!UNITS[@]}"; do
     IFS='|' read -r desc schedule exec_cmd timeout <<< "${UNITS[$name]}"
     timeout_line=""
     [[ -n "$timeout" ]] && timeout_line="TimeoutStartSec=$timeout"
 
     svc="$SYSTEMD_DIR/$name.service"
-    if [[ ! -f "$svc" ]]; then
-        cat > "$svc" <<UNIT
+    service_text=$(cat <<UNIT
 [Unit]
 Description=$desc
 After=network-online.target
@@ -283,14 +268,24 @@ $timeout_line
 StandardOutput=append:$STATE_DIR/$name.log
 StandardError=append:$STATE_DIR/$name.log
 UNIT
+    )
+    if [[ ! -f "$svc" ]]; then
+        printf '%s\n' "$service_text" > "$svc"
         log "Created $svc"
+    elif [[ "$name" == "rss-poll" && "$(<"$svc")" == "${service_text/"rss_poller.py --due"/"rss_poller.py"}" ]]; then
+        cp -p "$svc" "$svc.pre-hourly"
+        printf '%s\n' "$service_text" > "$svc"
+        RSS_UNITS_UPDATED=true
+        log "Updated rss-poll.service to respect each subscription's cadence (backup: $svc.pre-hourly)"
     else
         skip "$name.service exists"
+        if [[ "$name" == "rss-poll" && "$(<"$svc")" != "$service_text" ]]; then
+            log "WARNING: custom $svc preserved; check that ExecStart runs rss_poller.py --due."
+        fi
     fi
 
     tmr="$SYSTEMD_DIR/$name.timer"
-    if [[ ! -f "$tmr" ]]; then
-        cat > "$tmr" <<UNIT
+    timer_text=$(cat <<UNIT
 [Unit]
 Description=Run $name every interval
 
@@ -301,9 +296,20 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+    )
+    if [[ ! -f "$tmr" ]]; then
+        printf '%s\n' "$timer_text" > "$tmr"
         log "Created $tmr"
+    elif [[ "$name" == "rss-poll" && "$(<"$tmr")" == "${timer_text/"OnCalendar=$schedule"/"OnCalendar=*-*-* 06:10:00"}" ]]; then
+        cp -p "$tmr" "$tmr.pre-hourly"
+        printf '%s\n' "$timer_text" > "$tmr"
+        RSS_UNITS_UPDATED=true
+        log "Updated rss-poll.timer from daily to hourly (backup: $tmr.pre-hourly)"
     else
         skip "$name.timer exists"
+        if [[ "$name" == "rss-poll" && "$(<"$tmr")" != "$timer_text" ]]; then
+            log "WARNING: custom $tmr preserved; check that OnCalendar polls at least hourly."
+        fi
     fi
 done
 
@@ -324,18 +330,25 @@ if [[ -z "${CHAT_ID:-}" ]]; then
 fi
 
 ACTIVATED=false
-if "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
+if $MATCHING_READY && "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
     log "verify passed — activating timers"
+    ACTIVATED=true
     for name in "${!UNITS[@]}"; do
         if systemctl --user enable --now "$name.timer" 2>/dev/null; then
+            if [[ "$name" == "rss-poll" ]] && $RSS_UNITS_UPDATED; then
+                if ! systemctl --user restart "$name.timer" 2>/dev/null; then
+                    log "WARNING: could not restart the updated rss-poll.timer"
+                    ACTIVATED=false
+                fi
+            fi
             log "  activated $name.timer"
         else
             skip "could not activate $name.timer"
+            ACTIVATED=false
         fi
     done
-    ACTIVATED=true
 else
-    log "verify did NOT pass — timers left disabled (the system is not live)."
+    log "Activation skipped: matching setup or verification is incomplete. Existing running services were not stopped."
 fi
 
 # ---------- summary ----------
@@ -347,13 +360,10 @@ if $ACTIVATED; then
     log "Re-run ./setup.sh any time; it is idempotent."
     log "Check anytime:  $PYTHON setup_verify.py status"
 else
-    log "Setup scaffolded — NOT live yet. Finish these, then re-run ./setup.sh"
-    log "(idempotent; it will pair, verify, and activate automatically):"
+    log "Setup incomplete — existing services were not stopped. Finish these, then re-run ./setup.sh:"
     log "  1. Fill in $ENV_FILE (leave TELEGRAM_CHAT_ID blank)"
     log "  2. Edit $CHANNELS_FILE with YOUR Telegram channels"
-    if [[ ! -f "$SOURCE_DIR/interests.txt" ]]; then
-        log "  3. Generate your profile: $PYTHON generate_profile.py --docs <dir> --name NAME"
-    fi
+    log "  3. Complete matching setup (Flash preferences and Pro criteria) when prompted"
     if [[ ! -f "$SESSION_FILE" ]]; then
         log "  4. Authenticate Telethon: $PYTHON it_jobs_poller.py"
     fi
@@ -363,3 +373,4 @@ else
     log "  Check status anytime: $PYTHON setup_verify.py status"
 fi
 log "========================================"
+$ACTIVATED || exit 1

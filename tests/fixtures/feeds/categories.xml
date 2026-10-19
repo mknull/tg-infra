@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<rss version="2.0"><channel>
+  <title>Remote Jobs</title><link>https://jobs.example/</link><description>Synthetic categorized jobs</description>
+  <item><guid>engineering-1</guid><title>Backend Engineer</title><link>https://jobs.example/engineering</link><category>Back-End Programming</category><description>Build distributed systems.</description></item>
+  <item><guid>sales-1</guid><title>Sales Representative</title><link>https://jobs.example/sales</link><category>Sales and Marketing</category><description>Sell software subscriptions.</description></item>
+</channel></rss>

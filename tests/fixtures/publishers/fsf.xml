@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<channel rdf:about="https://static.fsf.org/fsforg/rss/jobs.xml"><title>Free software jobs</title><link>https://www.fsf.org/resources/jobs/</link><description>Job feed</description></channel>
+<item rdf:about="http://www.fsf.org/resources/jobs/example-paid"><title>Systems Integration Administrator</title><link>http://www.fsf.org/resources/jobs/example-paid</link><description>Summary of a paid free software vacancy.</description><dc:date>2026-10-13T09:00:00Z</dc:date></item>
+<item rdf:about="http://www.fsf.org/resources/jobs/example-volunteer"><title>Volunteer opportunity: Software developer</title><link>http://www.fsf.org/resources/jobs/example-volunteer</link><description>Unpaid voluntary contribution.</description></item>
+<item rdf:about="http://www.fsf.org/resources/jobs/new/faq"><title>Frequently Asked Questions</title><link>http://www.fsf.org/resources/jobs/new/faq</link><description>Information for advertisers.</description></item>
+</rdf:RDF>

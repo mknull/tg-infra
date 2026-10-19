@@ -10,6 +10,7 @@ from lib import (STATE_DIR, PROJECT_DIR, load_env, ensure_valid_token,
                  write_cursor, graph_get)
 
 CURSOR_FILE = STATE_DIR / "feedback-cursor"
+FAILURE_NOTICE_FILE = STATE_DIR / "feedback-failure-notified"
 
 
 def _load_cursor() -> str | None:
@@ -101,8 +102,19 @@ def main() -> None:
 
     if reply:
         logging.info("processing reply %s", reply["id"])
-        update_current_direction(reply["body"], api_key)
+        try:
+            update_current_direction(reply["body"], api_key)
+        except Exception:
+            logging.exception("Could not update preferences; previous preferences remain active. Will retry this feedback next poll.")
+            from lib import deliver
+            if read_cursor(FAILURE_NOTICE_FILE) != reply["id"]:
+                sent = deliver("alert", "Could not update your job preferences from the email reply. "
+                               "Your previous preferences remain active; I will retry on the next feedback check.")
+                if sent:
+                    write_cursor(FAILURE_NOTICE_FILE, reply["id"])
+            sys.exit(1)
         _save_cursor(reply["received"])
+        FAILURE_NOTICE_FILE.unlink(missing_ok=True)
     else:
         logging.info("no new replies")
 

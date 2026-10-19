@@ -1,0 +1,455 @@
+{
+  "publishers": [
+    {
+      "id": "fossjobs",
+      "name": "FOSSJobs",
+      "evidence": "https://www.fossjobs.net/rss/",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://www.fossjobs.net/rss/all/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-06-01T14:39:46Z",
+          "newest_observed": "2026-10-13T17:03:16Z",
+          "coverage": "Category feeds each retain their own window (usually ten entries); old entries may no longer be open. All jobs is not a historical superset."
+        },
+        {
+          "id": "administrators",
+          "label": "Administrators",
+          "url": "https://www.fossjobs.net/rss/administrators/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2025-02-10T13:57:22Z",
+          "newest_observed": "2026-09-16T14:21:25Z",
+          "coverage": "Administrators jobs; independent retained window. "
+        },
+        {
+          "id": "editors",
+          "label": "Writers & Editors",
+          "url": "https://www.fossjobs.net/rss/editors/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2022-05-20T18:47:53Z",
+          "newest_observed": "2026-07-09T11:19:01Z",
+          "coverage": "Editors jobs; independent retained window. "
+        },
+        {
+          "id": "marketing",
+          "label": "Marketing & Sales",
+          "url": "https://www.fossjobs.net/rss/marketing/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2022-09-16T21:23:56Z",
+          "newest_observed": "2026-02-27T18:12:25Z",
+          "coverage": "Marketing jobs; independent retained window. "
+        },
+        {
+          "id": "designers",
+          "label": "Designers",
+          "url": "https://www.fossjobs.net/rss/designers/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2021-10-14T19:37:40Z",
+          "newest_observed": "2023-09-11T14:47:09Z",
+          "coverage": "Designers jobs; independent retained window. "
+        },
+        {
+          "id": "managers",
+          "label": "Managers",
+          "url": "https://www.fossjobs.net/rss/managers/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2024-11-22T20:59:46Z",
+          "newest_observed": "2026-06-17T11:29:49Z",
+          "coverage": "Managers jobs; independent retained window. "
+        },
+        {
+          "id": "testers",
+          "label": "Testers",
+          "url": "https://www.fossjobs.net/rss/testers/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2021-09-08T20:23:45Z",
+          "newest_observed": "2023-07-10T09:02:48Z",
+          "coverage": "Testers jobs; independent retained window. "
+        },
+        {
+          "id": "consultants",
+          "label": "Consultants",
+          "url": "https://www.fossjobs.net/rss/consultants/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2022-11-03T07:18:47Z",
+          "newest_observed": "2025-07-17T09:58:30Z",
+          "coverage": "Consultants jobs; independent retained window. "
+        },
+        {
+          "id": "programmers",
+          "label": "Programmers",
+          "url": "https://www.fossjobs.net/rss/programmers/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-02-09T14:34:51Z",
+          "newest_observed": "2026-10-07T22:22:49Z",
+          "coverage": "Programmers jobs; independent retained window. "
+        },
+        {
+          "id": "researchers",
+          "label": "Researchers",
+          "url": "https://www.fossjobs.net/rss/researchers/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2018-06-28T20:00:45Z",
+          "newest_observed": "2026-09-06T19:48:18Z",
+          "coverage": "Researchers jobs; independent retained window. "
+        },
+        {
+          "id": "translators",
+          "label": "Translators",
+          "url": "https://www.fossjobs.net/rss/translators/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 3,
+          "oldest_observed": "2012-11-17T22:58:15Z",
+          "newest_observed": "2012-11-26T17:24:29Z",
+          "coverage": "Translators jobs; independent retained window. "
+        },
+        {
+          "id": "support",
+          "label": "Support",
+          "url": "https://www.fossjobs.net/rss/support/",
+          "evidence": "https://www.fossjobs.net/rss/",
+          "observed_entries": 10,
+          "oldest_observed": "2023-01-10T09:46:05Z",
+          "newest_observed": "2026-10-13T17:03:16Z",
+          "coverage": "Support jobs; independent retained window. "
+        }
+      ],
+      "coverage": "Category feeds each retain their own window (usually ten entries); old entries may no longer be open. All jobs is not a historical superset.",
+      "content": "full",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 1
+      }
+    },
+    {
+      "id": "fsf",
+      "name": "Free Software Foundation Jobs",
+      "evidence": "https://www.fsf.org/resources/jobs/",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://static.fsf.org/fsforg/rss/jobs.xml",
+          "evidence": "https://www.fsf.org/resources/jobs/",
+          "observed_entries": 6,
+          "oldest_observed": null,
+          "newest_observed": null,
+          "coverage": "One feed mixes paid vacancies, volunteering and information pages. Summaries require the linked description. No verified category filters."
+        }
+      ],
+      "coverage": "One feed mixes paid vacancies, volunteering and information pages. Summaries require the linked description. No verified category filters.",
+      "content": "summary",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 24,
+        "enrich": "fsf",
+        "exclude_url_prefixes": [
+          "https://www.fsf.org/resources/jobs/new/"
+        ]
+      }
+    },
+    {
+      "id": "opensourcejobhub",
+      "name": "Open Source JobHub",
+      "evidence": "https://opensourcejobhub.com/jobs/",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://opensourcejobhub.com/rss/",
+          "evidence": "https://opensourcejobhub.com/jobs/",
+          "observed_entries": 32,
+          "oldest_observed": "2022-12-01T20:25:36Z",
+          "newest_observed": "2026-10-14T20:10:04Z",
+          "coverage": "One general feed with full descriptions. Tested q and categories[] parameters were ignored; no verified source-side filters."
+        }
+      ],
+      "coverage": "One general feed with full descriptions. Tested q and categories[] parameters were ignored; no verified source-side filters.",
+      "content": "full",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 1
+      }
+    },
+    {
+      "id": "wwr",
+      "name": "We Work Remotely",
+      "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://weworkremotely.com/remote-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 88,
+          "oldest_observed": "2026-01-21T19:48:20Z",
+          "newest_observed": "2026-10-18T07:31:05Z",
+          "coverage": "Category windows overlap and can contain jobs absent from All jobs. All Programming omitted back-end jobs in verification; select Back-End explicitly when relevant. Regional variants can share a GUID. Links must attribute We Work Remotely."
+        },
+        {
+          "id": "customer-support",
+          "label": "Customer Support",
+          "url": "https://weworkremotely.com/categories/remote-customer-support-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 60,
+          "oldest_observed": "2025-12-05T10:37:40Z",
+          "newest_observed": "2026-10-16T07:31:00Z",
+          "coverage": "Customer Support jobs; independent retained window. "
+        },
+        {
+          "id": "product",
+          "label": "Product",
+          "url": "https://weworkremotely.com/categories/remote-product-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 23,
+          "oldest_observed": "2026-09-23T07:31:13Z",
+          "newest_observed": "2026-10-17T07:31:02Z",
+          "coverage": "Product jobs; independent retained window. "
+        },
+        {
+          "id": "full-stack-programming",
+          "label": "Full Stack Programming",
+          "url": "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 65,
+          "oldest_observed": "2024-05-13T03:14:30Z",
+          "newest_observed": "2026-10-18T07:31:05Z",
+          "coverage": "Full Stack Programming jobs; independent retained window. "
+        },
+        {
+          "id": "back-end-programming",
+          "label": "Back End Programming",
+          "url": "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 3,
+          "oldest_observed": "2026-09-17T10:51:23Z",
+          "newest_observed": "2026-10-18T07:30:58Z",
+          "coverage": "Back End Programming jobs; independent retained window. "
+        },
+        {
+          "id": "front-end-programming",
+          "label": "Front End Programming",
+          "url": "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 5,
+          "oldest_observed": "2026-09-28T22:12:45Z",
+          "newest_observed": "2026-10-02T17:39:45Z",
+          "coverage": "Front End Programming jobs; independent retained window. "
+        },
+        {
+          "id": "programming",
+          "label": "Programming",
+          "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 24,
+          "oldest_observed": "2024-05-13T03:14:30Z",
+          "newest_observed": "2026-10-02T17:39:45Z",
+          "coverage": "Programming jobs; independent retained window. Does not cover all back-end jobs."
+        },
+        {
+          "id": "sales-and-marketing",
+          "label": "Sales And Marketing",
+          "url": "https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 125,
+          "oldest_observed": "2025-05-13T12:15:43Z",
+          "newest_observed": "2026-10-18T07:31:05Z",
+          "coverage": "Sales And Marketing jobs; independent retained window. "
+        },
+        {
+          "id": "management-and-finance",
+          "label": "Management And Finance",
+          "url": "https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 20,
+          "oldest_observed": "2023-02-07T20:07:41Z",
+          "newest_observed": "2026-10-18T07:30:58Z",
+          "coverage": "Management And Finance jobs; independent retained window. "
+        },
+        {
+          "id": "design",
+          "label": "Design",
+          "url": "https://weworkremotely.com/categories/remote-design-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 30,
+          "oldest_observed": "2026-08-26T11:52:22Z",
+          "newest_observed": "2026-10-18T07:31:05Z",
+          "coverage": "Design jobs; independent retained window. "
+        },
+        {
+          "id": "devops-sysadmin",
+          "label": "Devops Sysadmin",
+          "url": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 25,
+          "oldest_observed": "2026-09-19T07:31:10Z",
+          "newest_observed": "2026-10-18T07:30:58Z",
+          "coverage": "Devops Sysadmin jobs; independent retained window. "
+        },
+        {
+          "id": "other",
+          "label": "All Other Jobs",
+          "url": "https://weworkremotely.com/categories/all-other-remote-jobs.rss",
+          "evidence": "https://weworkremotely.com/remote-job-rss-feed",
+          "observed_entries": 68,
+          "oldest_observed": "2023-06-21T14:22:59Z",
+          "newest_observed": "2026-10-18T07:30:58Z",
+          "coverage": "All Other Remote jobs; independent retained window. "
+        }
+      ],
+      "coverage": "Category windows overlap and can contain jobs absent from All jobs. All Programming omitted back-end jobs in verification; select Back-End explicitly when relevant. Regional variants can share a GUID. Links must attribute We Work Remotely.",
+      "content": "full",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 1,
+        "merge_variants": true
+      }
+    },
+    {
+      "id": "nodesk",
+      "name": "NoDesk",
+      "evidence": "https://nodesk.co/remote-jobs/",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://nodesk.co/remote-jobs/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-07T06:00:00Z",
+          "newest_observed": "2026-10-17T01:04:30Z",
+          "coverage": "Advertised category feeds retain up to ten summaries; retrieve the linked JobPosting description. Geography/skill filters remain unverified."
+        },
+        {
+          "id": "customer-support",
+          "label": "Customer Support",
+          "url": "https://nodesk.co/remote-jobs/customer-support/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/customer-support/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-12T08:00:00Z",
+          "coverage": "Customer Support jobs; independent retained window. "
+        },
+        {
+          "id": "design",
+          "label": "Design",
+          "url": "https://nodesk.co/remote-jobs/design/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/design/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-08T06:00:00Z",
+          "coverage": "Design jobs; independent retained window. "
+        },
+        {
+          "id": "engineering",
+          "label": "Engineering",
+          "url": "https://nodesk.co/remote-jobs/engineering/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/engineering/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-17T01:04:30Z",
+          "coverage": "Engineering jobs; independent retained window. "
+        },
+        {
+          "id": "marketing",
+          "label": "Marketing",
+          "url": "https://nodesk.co/remote-jobs/marketing/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/marketing/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-08T06:00:00Z",
+          "coverage": "Marketing jobs; independent retained window. "
+        },
+        {
+          "id": "operations",
+          "label": "Operations",
+          "url": "https://nodesk.co/remote-jobs/operations/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/operations/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-08T06:00:00Z",
+          "coverage": "Operations jobs; independent retained window. "
+        },
+        {
+          "id": "product",
+          "label": "Product",
+          "url": "https://nodesk.co/remote-jobs/product/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/product/",
+          "observed_entries": 4,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-02T06:00:00Z",
+          "coverage": "Product jobs; independent retained window. "
+        },
+        {
+          "id": "sales",
+          "label": "Sales",
+          "url": "https://nodesk.co/remote-jobs/sales/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/sales/",
+          "observed_entries": 10,
+          "oldest_observed": "2026-10-02T06:00:00Z",
+          "newest_observed": "2026-10-14T16:50:50Z",
+          "coverage": "Sales jobs; independent retained window. "
+        },
+        {
+          "id": "other",
+          "label": "Other",
+          "url": "https://nodesk.co/remote-jobs/other/index.xml",
+          "evidence": "https://nodesk.co/remote-jobs/other/",
+          "observed_entries": 9,
+          "oldest_observed": "2026-02-01T06:00:00Z",
+          "newest_observed": "2026-10-14T08:00:00Z",
+          "coverage": "Other jobs; independent retained window. "
+        }
+      ],
+      "coverage": "Advertised category feeds retain up to ten summaries; retrieve the linked JobPosting description. Geography/skill filters remain unverified.",
+      "content": "summary",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 1,
+        "repair_html_entities": true,
+        "enrich": "nodesk"
+      }
+    },
+    {
+      "id": "tails",
+      "name": "Tails Jobs",
+      "evidence": "https://tails.net/jobs/",
+      "verified_at": "2026-10-18",
+      "options": [
+        {
+          "id": "all",
+          "label": "All",
+          "url": "https://tails.net/jobs/index.rss",
+          "evidence": "https://tails.net/jobs/",
+          "observed_entries": 0,
+          "oldest_observed": null,
+          "newest_observed": null,
+          "coverage": "One optional jobs feed; valid empty feeds mean no published vacancies."
+        }
+      ],
+      "coverage": "One optional jobs feed; valid empty feeds mean no published vacancies.",
+      "content": "full",
+      "defaults": {
+        "allow_empty": true,
+        "poll_interval_hours": 24
+      }
+    }
+  ]
+}

@@ -1,158 +1,125 @@
-#!/usr/bin/env python3
-"""Tests for CurrentDirection load, update, compress, and triage integration."""
-
-import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+"""Preference publication and actual downstream model prompts, in temporary state."""
 
 import json
+import tempfile
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-PROJECT = Path(__file__).resolve().parents[1]
-DIRECTION_FILE = PROJECT / "state" / "current-direction.md"
-DIRECTION_SMALL_FILE = PROJECT / "state" / "current-direction-small.md"
-DIRECTION_AUDIT = PROJECT / "state" / "audit" / "direction.jsonl"
+import agent
+import email_triage
+import it_jobs_triage
+import weekly_trend
+import lib.direction as direction
 
 
-class TestLoadCurrentDirection(unittest.TestCase):
-
+class TestDirection(unittest.TestCase):
     def setUp(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.root = Path(self.stack.enter_context(tempfile.TemporaryDirectory()))
+        for key, name in (("DIRECTION_FILE", "current-direction.md"),
+                          ("DIRECTION_SMALL_FILE", "current-direction-small.md"),
+                          ("DIRECTION_AUDIT_FILE", "audit.jsonl")):
+            self.stack.enter_context(patch.object(direction, key, self.root / name))
+        self.full = "Prioritize accessibility engineering. Exclude sales roles."
+        self.small = "Watch for accessibility; skip sales."
 
-    def tearDown(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
+    def test_missing_and_legacy_direction(self):
+        self.assertEqual(direction.load_direction_pair(), ("", ""))
+        direction.DIRECTION_FILE.write_text(self.full)
+        self.assertEqual(direction.load_direction_pair(), (self.full, self.full))
+        direction.DIRECTION_SMALL_FILE.write_text(self.small)
+        self.assertEqual(direction.load_direction_pair(), (self.full, self.small))
 
-    def test_loads_file_when_present(self):
-        DIRECTION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DIRECTION_FILE.write_text("# Current direction\n\nPrioritize ML research.")
-        from lib import load_current_direction
-        text = load_current_direction()
-        self.assertIn("ML research", text)
+    def test_update_publishes_both_and_audits(self):
+        with patch.object(direction, "call_deepseek", side_effect=[self.full, self.small]):
+            result = direction.update_current_direction("Accessibility please", "fake-key")
+        self.assertEqual(result, self.full)
+        self.assertEqual(direction.load_direction_pair(), (self.full, self.small))
+        self.assertEqual(direction.DIRECTION_FILE.read_text().strip(), self.full)
+        self.assertEqual(direction.DIRECTION_SMALL_FILE.read_text().strip(), self.small)
+        audit = json.loads(direction.DIRECTION_AUDIT_FILE.read_text())
+        self.assertEqual(audit["feedback"], "Accessibility please")
+        self.assertTrue(json.loads(direction.direction_record_path().read_text())["revision"])
 
-    def test_returns_empty_string_when_missing(self):
-        from lib import load_current_direction
-        text = load_current_direction()
-        self.assertEqual(text, "")
+    def test_failed_compression_preserves_entire_previous_version(self):
+        direction.save_direction_pair("Old full", "Old small")
+        before = {p: p.read_bytes() for p in self.root.iterdir() if p.is_file()}
+        with patch.object(direction, "call_deepseek", side_effect=[self.full, RuntimeError("offline")]):
+            with self.assertRaises(RuntimeError):
+                direction.update_current_direction("new feedback", "fake-key")
+        for path, content in before.items():
+            self.assertEqual(path.read_bytes(), content)
+        self.assertEqual(direction.load_direction_pair(), ("Old full", "Old small"))
+        self.assertFalse(direction.DIRECTION_AUDIT_FILE.exists())
 
+    def test_empty_responses_do_not_publish(self):
+        for responses in ([""], [self.full, ""], [self.full, "no change"]):
+            with self.subTest(responses=responses), patch.object(direction, "call_deepseek", side_effect=responses):
+                with self.assertRaises(ValueError):
+                    direction.update_current_direction("feedback", "fake-key")
+                self.assertFalse(direction.direction_record_path().exists())
 
-class TestCompressDirection(unittest.TestCase):
+    def test_authoritative_pair_is_independent_of_export_files(self):
+        direction.save_direction_pair(self.full, self.small)
+        direction.DIRECTION_FILE.write_text("stale export")
+        direction.DIRECTION_SMALL_FILE.unlink()
+        self.assertEqual(direction.load_direction_pair(), (self.full, self.small))
+        attachments = weekly_trend._get_direction_attachments()
+        self.assertEqual([a["content"] for a in attachments], [self.full, self.small])
 
-    def setUp(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
-        DIRECTION_SMALL_FILE.unlink(missing_ok=True)
+    def test_atomic_publish_failure_keeps_previous_pair(self):
+        direction.save_direction_pair("Old full", "Old small")
+        with patch.object(direction, "call_deepseek", side_effect=[self.full, self.small]), patch(
+                "lib.state.os.replace", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                direction.update_current_direction("feedback", "fake-key")
+        self.assertEqual(direction.load_direction_pair(), ("Old full", "Old small"))
 
-    @patch("lib.direction.call_deepseek")
-    def test_compresses_full_to_one_sentence(self, mock_call):
-        mock_call.return_value = "Prioritize ML research. Skip: data engineering, frontend."
-        full = "The candidate wants ML research roles. Also exploring comp bio. No data engineering."
-        from lib import compress_current_direction
-        result = compress_current_direction(full, "fake-key")
-        self.assertIn("ML research", result)
+    def test_actual_triage_prompts_receive_correct_form_and_precedence(self):
+        direction.save_direction_pair(self.full, self.small)
+        criteria = self.root / "criteria.md"
+        criteria.write_text("Candidate Profile: older preference for sales.")
+        result = '{"decision":"skip","reason":"test","message":"","tags":{}}'
+        calls = [
+            (it_jobs_triage, lambda: it_jobs_triage.flash_incremental("Role\nCompany\nDetails", "Engineering", "Research", "fake-key"), self.small),
+            (it_jobs_triage, lambda: it_jobs_triage.pro_full_eval("Role details", "fake-key"), self.full),
+            (email_triage, lambda: email_triage.flash_header_triage("from", "subject", "fake-key"), self.small),
+            (email_triage, lambda: email_triage.pro_body_triage("from", "subject", "body", "fake-key"), self.full),
+        ]
+        for module, invoke, expected in calls:
+            with self.subTest(module=module.__name__, expected=expected), patch.object(
+                    module, "CRITERIA_FILE", criteria), patch.object(module, "call_deepseek", return_value=result) as model:
+                invoke()
+                prompt = model.call_args.args[1]
+                self.assertIn(expected, prompt)
+                self.assertIn("override conflicting", prompt)
 
-    @patch("lib.direction.call_deepseek")
-    def test_saves_small_file(self, mock_call):
-        mock_call.return_value = "Prioritize ML research."
-        from lib import compress_current_direction
-        compress_current_direction("Full direction...", "fake-key")
-        self.assertTrue(DIRECTION_SMALL_FILE.exists())
+    def test_absent_delta_does_not_change_base_prompt(self):
+        with patch.object(it_jobs_triage, "call_deepseek", return_value='{"decision":"disqualified"}') as model:
+            it_jobs_triage.flash_incremental("Role", "Design", "Research", "fake-key")
+        self.assertNotIn("Current preference deltas", model.call_args.args[1])
 
-    @patch("lib.direction.call_deepseek")
-    def test_no_change_returns_no_change(self, mock_call):
-        mock_call.return_value = "no change"
-        from lib import compress_current_direction
-        result = compress_current_direction("empty", "fake-key")
-        self.assertTrue(DIRECTION_SMALL_FILE.exists())
-        self.assertIn("no change", DIRECTION_SMALL_FILE.read_text())
+    def test_weekly_report_and_brief_receive_full_direction(self):
+        direction.save_direction_pair(self.full, self.small)
+        agg = {"total_tagged": 1, "role_types": {}, "skills": [], "tech_stack": [], "domains": {},
+               "seniority": {}, "remote": 0, "onsite": 1}
+        with patch.object(weekly_trend, "call_deepseek", return_value="report") as model:
+            weekly_trend.build_report("Profile", agg, [], "fake-key")
+        self.assertIn(self.full, model.call_args.args[1])
+        self.assertIn(self.full, agent.build_system_prompt())
 
-
-class TestUpdateDirection(unittest.TestCase):
-
-    def setUp(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
-        DIRECTION_AUDIT.unlink(missing_ok=True)
-        DIRECTION_AUDIT.parent.mkdir(parents=True, exist_ok=True)
-
-    def tearDown(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
-        DIRECTION_AUDIT.unlink(missing_ok=True)
-
-    def _mock_compress(self, full_text, api_key):
-        """Helper: actually write the small file like the real function does."""
-        DIRECTION_SMALL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DIRECTION_SMALL_FILE.write_text("Prioritize ML research.\n")
-        return "Prioritize ML research."
-
-    @patch("lib.direction.call_deepseek")
-    @patch("lib.direction.compress_current_direction")
-    def test_writes_new_direction_and_small(self, mock_compress, mock_pro):
-        """After update, both files exist."""
-        DIRECTION_FILE.write_text("Old: prioritize data science.")
-        mock_pro.return_value = "Prioritize ML research. Explore comp bio."
-        mock_compress.side_effect = self._mock_compress
-
-        from lib import update_current_direction
-        update_current_direction("I want ML research, not data science", "fake-key")
-
-        full = DIRECTION_FILE.read_text()
-        self.assertIn("ML research", full)
-        self.assertTrue(DIRECTION_SMALL_FILE.exists())
-
-    @patch("lib.direction.call_deepseek")
-    @patch("lib.direction.compress_current_direction")
-    def test_audit_record_written(self, mock_compress, mock_pro):
-        """Direction change logged to audit."""
-        DIRECTION_FILE.write_text("Old direction.")
-        mock_pro.return_value = "New direction."
-        mock_compress.side_effect = self._mock_compress
-
-        from lib import update_current_direction
-        update_current_direction("change it", "fake-key")
-
-        self.assertTrue(DIRECTION_AUDIT.exists())
-        records = [json.loads(l) for l in
-                   DIRECTION_AUDIT.read_text().splitlines() if l.strip()]
-        self.assertEqual(len(records), 1)
-        self.assertIn("feedback", records[0])
-        self.assertEqual(records[0]["feedback"], "change it")
-
-    @patch("lib.direction.call_deepseek")
-    @patch("lib.direction.compress_current_direction")
-    def test_no_file_creates_first_direction(self, mock_compress, mock_pro):
-        """No existing direction → create from feedback."""
-        mock_pro.return_value = "First direction: ML research roles."
-        mock_compress.side_effect = self._mock_compress
-
-        from lib import update_current_direction
-        update_current_direction("I like ML research", "fake-key")
-
-        self.assertTrue(DIRECTION_FILE.exists())
-
-
-class TestDirectionInTriagePrompt(unittest.TestCase):
-
-    def setUp(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
-        DIRECTION_SMALL_FILE.unlink(missing_ok=True)
-
-    def tearDown(self):
-        DIRECTION_FILE.unlink(missing_ok=True)
-        DIRECTION_SMALL_FILE.unlink(missing_ok=True)
-
-    def test_flash_prompt_includes_direction_small(self):
-        """When direction small exists, flash prompt includes it."""
-        DIRECTION_SMALL_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DIRECTION_SMALL_FILE.write_text("Skip: data engineering, frontend.")
-
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "triage", PROJECT / "it_jobs_triage.py")
-        triage = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(triage)
-
-        direction = triage._load_direction_small()
-        self.assertIn("Skip", direction)
+    def test_next_evaluation_reads_updated_preferences(self):
+        with patch.object(it_jobs_triage, "call_deepseek", return_value='{"decision":"disqualified"}') as model:
+            direction.save_direction_pair("Old", "Old compressed")
+            it_jobs_triage.flash_incremental("Role", "Design", "Research", "fake-key")
+            direction.save_direction_pair(self.full, self.small)
+            it_jobs_triage.flash_incremental("Role", "Design", "Research", "fake-key")
+        self.assertIn("Old compressed", model.call_args_list[0].args[1])
+        self.assertIn(self.small, model.call_args_list[1].args[1])
 
 
 if __name__ == "__main__":
-    unittest.main(verbosity=2)
+    unittest.main()

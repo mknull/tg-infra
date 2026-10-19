@@ -1,0 +1,59 @@
+{
+  "feeds": [
+    {
+      "id": "fossjobs",
+      "name": "FOSSJobs",
+      "url": "https://www.fossjobs.net/rss/all/",
+      "enabled": false,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider"
+    },
+    {
+      "id": "fsf",
+      "name": "Free Software Foundation Jobs",
+      "url": "https://www.fsf.org/resources/jobs/RSS/",
+      "enabled": false,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider",
+      "exclude_url_prefixes": [
+        "https://www.fsf.org/resources/jobs/new/"
+      ]
+    },
+    {
+      "id": "opensourcejobhub",
+      "name": "Open Source JobHub",
+      "url": "https://opensourcejobhub.com/rss/",
+      "enabled": false,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider"
+    },
+    {
+      "id": "wwr",
+      "name": "We Work Remotely",
+      "url": "https://weworkremotely.com/remote-jobs.rss",
+      "enabled": false,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider",
+      "merge_variants": true
+    },
+    {
+      "id": "nodesk",
+      "name": "NoDesk",
+      "url": "https://nodesk.co/remote-jobs/index.xml",
+      "enabled": false,
+      "repair_html_entities": true,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider"
+    },
+    {
+      "id": "tails",
+      "name": "Tails Jobs",
+      "url": "https://tails.net/jobs/index.rss",
+      "enabled": false,
+      "allow_empty": true,
+      "desired_roles": "Roles you want to find here",
+      "acceptable_roles": "Roles you will also consider"
+    }
+  ],
+  "rss_selection_reviewed": false
+}

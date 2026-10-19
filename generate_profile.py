@@ -17,6 +17,9 @@ from pathlib import Path
 
 from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL, USER_NAME as _DEFAULT_NAME,
                  load_env, call_deepseek, setup_logging)
+from lib.direction import direction_context
+from lib.matching import PROFILE_FILES, build_flash_updates
+from lib.state import apply_text_updates
 
 GEN_DIR = PROJECT_DIR / "source"
 _SOURCE_DIR = PROJECT_DIR / "source"  # always reads from source/ (never overridden)
@@ -161,6 +164,13 @@ def stage1_generate_source(documents_text: str, user_name: str,
         logging.info("all source/ files exist, skipping (use --force to overwrite)")
         return
 
+    expected = {GEN_DIR / name: (GEN_DIR / name).read_text() if (GEN_DIR / name).exists() else None
+                for name in PROFILE_FILES}
+    apply_text_updates(build_source_updates(documents_text, api_key), expected)
+
+
+def build_source_updates(documents_text: str, api_key: str) -> dict[Path, str]:
+    """Generate a complete profile proposal without modifying existing files."""
     # --- Pass 1: extract structured facts (one call per document) ---
     # Split on document separators from extract_text
     docs = [d.strip() for d in documents_text.split("\n\n---\n\n") if d.strip()]
@@ -182,25 +192,27 @@ def stage1_generate_source(documents_text: str, user_name: str,
     raw = call_deepseek(PRO_MODEL, prompt, api_key)
     text = _strip_fences(raw)
 
-    # Split on file markers
+    # Only the three known profile filenames may be returned by the model.
+    files = {}
     current_file = None
     current_lines: list[str] = []
     for line in text.split("\n"):
         if line.startswith("###FILE:") and line.endswith("###"):
             if current_file:
-                _write_source_file(current_file, "\n".join(current_lines))
+                files[current_file] = "\n".join(current_lines).strip()
             current_file = line.replace("###FILE:", "").replace("###", "").strip()
+            if current_file not in PROFILE_FILES or current_file in files:
+                raise ValueError("Profile response contains an unknown or repeated filename")
             current_lines = []
         elif current_file:
             current_lines.append(line)
 
     if current_file:
-        _write_source_file(current_file, "\n".join(current_lines))
-
-    for name in ("interests.txt", "skills.txt", "tech_stack.txt"):
-        path = GEN_DIR / name
-        if not path.exists():
-            logging.warning("source/%s not produced by model", name)
+        files[current_file] = "\n".join(current_lines).strip()
+    if set(files) != set(PROFILE_FILES) or any(not value for value in files.values()):
+        raise ValueError("Profile response must contain all three nonempty profile files")
+    return {GEN_DIR / name: (content if content.startswith("# LLMs") else _SOURCE_HEADER + content) + "\n"
+            for name, content in files.items()}
 
 
 def _write_source_file(name: str, content: str) -> None:
@@ -223,12 +235,13 @@ def _generate_criteria_file(profile_context: str, example_path: Path,
         "You are generating a triage criteria file for a job pipeline.\n\n"
         "CANDIDATE PROFILE:\n"
         f"{profile_context}\n\n"
-        "FORMAT TEMPLATE (fill in the candidate-specific parts, "
-        "keep the structure and evaluation logic intact):\n"
+        "FORMAT TEMPLATE (reuse the structure, derive personal rules from the profile):\n"
         f"{example}\n\n"
         "Replace the candidate profile section with this user's profile. "
-        "Keep the Stage 1 and Stage 2 evaluation rules structurally identical "
-        "but adapt role keywords and domain references to this user's field. "
+        "Adapt all role, geography, degree, salary and experience rules to this user. "
+        "The example's personal restrictions are not defaults. Do not invent restrictions "
+        "unsupported by the user's information. Explicit current preferences override "
+        "conflicting historical profile information. "
         "Output the complete file."
     )
     raw = call_deepseek(PRO_MODEL, prompt, api_key)
@@ -267,30 +280,55 @@ def _generate_skill_profile(file_name: str, user_name: str,
 def stage2_generate_criteria(user_name: str, api_key: str,
                              force: bool = False) -> None:
     """Generate channel prompts, criteria files, and skill profiles."""
+    expected = generation_snapshot()
+    updates = build_stage2_updates(user_name, api_key, force)
+    apply_text_updates(updates, expected)
+
+
+def generation_snapshot() -> dict[Path, str | None]:
+    """Detect edits made while the model runs or the user reviews its output."""
+    from lib.direction import DIRECTION_FILE, DIRECTION_SMALL_FILE, direction_record_path
+    paths = [*(_SOURCE_DIR / name for name in PROFILE_FILES),
+             CHANNELS_FILE, STATE_DIR / "feeds.json", CRITERIA_TELEGRAM, CRITERIA_EMAIL,
+             DIRECTION_FILE, DIRECTION_SMALL_FILE, direction_record_path()]
+    for skill, filename in (("job-brief", "profile-for-relevance.md"),
+                            ("job-mine", "profile.md"), ("job-pitch", "profile-detailed.md")):
+        paths.extend([SKILLS_DIR / skill / "references" / filename, SKILLS_DIR / skill / "SKILL.md"])
+    return {path: path.read_text() if path.exists() else None for path in paths}
+
+
+def read_profile() -> str:
     profile_parts = []
-    for name in ("interests.txt", "skills.txt", "tech_stack.txt"):
+    for name in PROFILE_FILES:
         path = _SOURCE_DIR / name
         if path.exists():
             profile_parts.append(path.read_text())
     profile_context = "\n\n".join(profile_parts)
     if not profile_context.strip():
-        logging.error("source/ files empty or missing — run Stage 1 first")
-        sys.exit(1)
+        raise ValueError("source/ files empty or missing — generate the profile first")
+    return profile_context
 
-    with CHANNELS_FILE.open() as f:
-        channels_config = json.loads(f.read())
+
+def build_stage2_updates(user_name: str, api_key: str, force: bool = False,
+                         profile_context: str | None = None,
+                         preferences: str | None = None,
+                         config_overrides: dict[Path, str] | None = None) -> dict[Path, str]:
+    profile_context = profile_context if profile_context is not None else read_profile()
+    profile_context += direction_context() if preferences is None else (
+        "\n\nExplicit current preferences (override conflicting historical information):\n" + preferences)
+    updates = {**(config_overrides or {}), **build_flash_updates(
+        PROJECT_DIR, profile_context, api_key, call_deepseek, force, config_overrides)}
 
     for criteria_path, example_path in [
         (CRITERIA_TELEGRAM, PROJECT_DIR / "it-jobs-criteria.md.example"),
         (CRITERIA_EMAIL, PROJECT_DIR / "email-triage-criteria.md.example"),
     ]:
-        if criteria_path.exists() and not force:
+        if criteria_path.exists() and criteria_path.read_text().strip() and not force:
             logging.info("%s exists, skipping (use --force)", criteria_path.name)
             continue
         logging.info("generating %s ...", criteria_path.name)
         content = _generate_criteria_file(profile_context, example_path, api_key)
-        criteria_path.write_text(content)
-        logging.info("%s written (%d chars)", criteria_path.name, len(content))
+        updates[criteria_path] = content
 
     skill_targets = [
         (SKILLS_DIR / "job-brief" / "references" / "profile-for-relevance.md",
@@ -301,26 +339,25 @@ def stage2_generate_criteria(user_name: str, api_key: str,
          "profile-detailed.md"),
     ]
     for path, file_name in skill_targets:
-        if path.exists() and not force:
+        if path.exists() and path.read_text().strip() and not force:
             logging.info("%s exists, skipping (use --force)", path)
             continue
-        path.parent.mkdir(parents=True, exist_ok=True)
         logging.info("generating %s ...", path)
         content = _generate_skill_profile(file_name, user_name,
                                           profile_context, api_key)
-        path.write_text(content)
-        logging.info("%s written (%d chars)", path.name, len(content))
+        updates[path] = content
 
     for skill_name in ("job-brief", "job-mine", "job-pitch"):
         skill_path = SKILLS_DIR / skill_name / "SKILL.md"
         if skill_path.exists() and not force:
             continue
-        skill_path.parent.mkdir(parents=True, exist_ok=True)
         content = (f"# {user_name} — {skill_name.replace('-', ' ').title()} Skill\n\n"
                    f"This skill is private to {user_name}'s job hunt. "
                    "Generated by generate_profile.py.\n")
-        skill_path.write_text(content)
-        logging.info("%s written", skill_path)
+        updates[skill_path] = content
+    if any(not content.strip() for content in updates.values()):
+        raise ValueError("Model returned an empty generated file; no settings saved")
+    return updates
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +368,7 @@ def main() -> None:
     setup_logging()
     import argparse
     p = argparse.ArgumentParser(description="Generate user-specific profile files")
+    p.add_argument("--setup", action="store_true", help="interactive setup with preview and preservation of existing preferences")
     p.add_argument("--docs", type=Path,
                    help="directory of documents (CV PDF, transcripts, letters, etc.)")
     p.add_argument("--text", type=str,
@@ -344,6 +382,10 @@ def main() -> None:
     p.add_argument("--force", action="store_true",
                    help="overwrite existing files")
     args = p.parse_args()
+
+    if args.setup:
+        from lib.setup_matching import run_setup
+        sys.exit(run_setup(sys.modules[__name__]))
 
     global GEN_DIR
     if args.output_dir:
@@ -372,10 +414,7 @@ def main() -> None:
         stage1_generate_source(documents_text, user_name, api_key,
                                force=args.force)
 
-    if CHANNELS_FILE.exists():
-        stage2_generate_criteria(user_name, api_key, force=args.force)
-    else:
-        logging.info("no channels.json — skipping Stage 2 (create channel config first)")
+    stage2_generate_criteria(user_name, api_key, force=args.force)
 
 
 if __name__ == "__main__":
