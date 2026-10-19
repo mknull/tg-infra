@@ -4,7 +4,8 @@ import os
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-STATE_DIR = PROJECT_DIR / "state"
+DATA_DIR = Path(os.environ.get("TG_INFRA_DATA_DIR", PROJECT_DIR)).expanduser().resolve()
+STATE_DIR = DATA_DIR / "state"
 
 DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
 FLASH_MODEL = "deepseek-v4-flash"

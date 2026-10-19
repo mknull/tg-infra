@@ -24,6 +24,11 @@ from lib import (load_env, setup_logging, report_week, load_ledger,
 
 def main() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("weekly", STATE_DIR):
+        logging.info("weekly disabled by configuration")
+        return
     now = datetime.now(timezone.utc)
     week = report_week(now)
     week_key = week["week_key"]

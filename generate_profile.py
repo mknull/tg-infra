@@ -11,6 +11,7 @@ Usage:
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,11 @@ from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL, USER_NAME as _DEFAULT_NAME,
 from lib.direction import direction_context
 from lib.matching import PROFILE_FILES, build_flash_updates
 from lib.state import apply_text_updates
+from lib.config import DATA_DIR
+from lib.features import load as load_installation
+
+CODE_DIR = PROJECT_DIR
+PROJECT_DIR = DATA_DIR
 
 GEN_DIR = PROJECT_DIR / "source"
 _SOURCE_DIR = PROJECT_DIR / "source"  # always reads from source/ (never overridden)
@@ -50,12 +56,17 @@ def extract_text(docs_dir: Path) -> str:
     """Extract text from all supported files in a directory."""
     texts = []
     for path in sorted(docs_dir.iterdir()):
+        if not path.is_file():
+            logging.info("skipping directory: %s", path.name)
+            continue
+        before = len(texts)
         if path.suffix.lower() == ".txt":
             texts.append(path.read_text())
         elif path.suffix.lower() == ".pdf":
             result = subprocess.run(
                 ["pdftotext", "-layout", str(path), "-"],
                 capture_output=True, text=True,
+                timeout=60,
             )
             if result.returncode == 0 and result.stdout.strip():
                 texts.append(result.stdout)
@@ -65,6 +76,13 @@ def extract_text(docs_dir: Path) -> str:
             texts.append(path.read_text())
         else:
             logging.info("skipping unsupported format: %s", path.name)
+        if os.environ.get("TG_SETUP_GUIDED") == "1":
+            if len(texts) > before:
+                size = len(texts[-1])
+                print(f"  {path.name}: {size:,} extracted characters" +
+                      (" — only the first 8,000 will be used; provide a shorter summary if essential details come later" if size > 8000 else ""))
+            else:
+                print(f"  {path.name}: skipped (unsupported or no extractable text)")
 
     if not texts:
         raise ValueError(f"No extractable text found in {docs_dir}")
@@ -319,10 +337,14 @@ def build_stage2_updates(user_name: str, api_key: str, force: bool = False,
     updates = {**(config_overrides or {}), **build_flash_updates(
         PROJECT_DIR, profile_context, api_key, call_deepseek, force, config_overrides)}
 
+    installation = load_installation(PROJECT_DIR / "state")
+    selected = installation["features"] if installation else None
     for criteria_path, example_path in [
-        (CRITERIA_TELEGRAM, PROJECT_DIR / "it-jobs-criteria.md.example"),
-        (CRITERIA_EMAIL, PROJECT_DIR / "email-triage-criteria.md.example"),
+        (CRITERIA_TELEGRAM, CODE_DIR / "it-jobs-criteria.md.example"),
+        (CRITERIA_EMAIL, CODE_DIR / "email-triage-criteria.md.example"),
     ]:
+        if selected and not (selected["email"] if criteria_path == CRITERIA_EMAIL else selected["telegram"] or selected["rss"]):
+            continue
         if criteria_path.exists() and criteria_path.read_text().strip() and not force:
             logging.info("%s exists, skipping (use --force)", criteria_path.name)
             continue
@@ -339,6 +361,8 @@ def build_stage2_updates(user_name: str, api_key: str, force: bool = False,
          "profile-detailed.md"),
     ]
     for path, file_name in skill_targets:
+        if selected and not selected["briefings"]:
+            continue
         if path.exists() and path.read_text().strip() and not force:
             logging.info("%s exists, skipping (use --force)", path)
             continue
@@ -348,6 +372,8 @@ def build_stage2_updates(user_name: str, api_key: str, force: bool = False,
         updates[path] = content
 
     for skill_name in ("job-brief", "job-mine", "job-pitch"):
+        if selected and not selected["briefings"]:
+            continue
         skill_path = SKILLS_DIR / skill_name / "SKILL.md"
         if skill_path.exists() and not force:
             continue

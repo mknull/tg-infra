@@ -59,6 +59,11 @@ def write_status(ok: bool, detail: str) -> None:
 
 
 def main() -> None:
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("canary", STATE_DIR):
+        logging.info("canary disabled by configuration")
+        return
     ok, detail = run_canary()
     write_status(ok, detail)
     if ok:

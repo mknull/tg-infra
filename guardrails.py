@@ -10,7 +10,9 @@ import re
 import tempfile
 from pathlib import Path
 
-PROJECT = Path(__file__).resolve().parent
+from lib.config import DATA_DIR
+
+PROJECT = DATA_DIR
 SOURCE_DIR = PROJECT / "source"
 BRIEFS_DIR = PROJECT / "workspace" / "briefs"
 STATE_DIR = PROJECT / "state"

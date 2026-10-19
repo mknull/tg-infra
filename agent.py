@@ -8,7 +8,7 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-from lib import (DEEPSEEK_API_URL, PRO_MODEL, FLASH_MODEL, STATE_DIR, PROJECT_DIR,
+from lib import (DEEPSEEK_API_URL, PRO_MODEL, FLASH_MODEL, STATE_DIR, DATA_DIR as PROJECT_DIR,
                  USER_NAME, call_deepseek, write_audit)
 from tools import read_file, web_search, web_fetch, md_to_pdf
 from guardrails import RateLimiter, BRIEFS_DIR

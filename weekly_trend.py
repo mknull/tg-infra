@@ -7,7 +7,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from lib import (PROJECT_DIR, STATE_DIR, PRO_MODEL,
+from lib import (DATA_DIR as PROJECT_DIR, STATE_DIR, PRO_MODEL,
                  load_env, call_deepseek, send_email,
                  ensure_valid_token, setup_logging,
                  report_week, load_ledger, update_ledger,
@@ -413,6 +413,11 @@ def ensure_week_report(env: dict, now=None) -> str:
 
 def main() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("weekly", STATE_DIR):
+        logging.info("weekly disabled by configuration")
+        return
     env = load_env()
 
     if DRY_RUN:

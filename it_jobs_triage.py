@@ -28,7 +28,7 @@ def _load_channel_config() -> dict[str, dict]:
     """Load per-channel config from channels.json, keyed by username."""
     with (STATE_DIR / "channels.json").open() as f:
         channels = json.loads(f.read())["channels"]
-    return {ch["username"]: ch for ch in channels}
+    return {ch["username"]: ch for ch in channels if ch.get("enabled", True)}
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +225,10 @@ def evaluate_message(content: str, ch_config: dict, api_key: str) -> dict:
 
 def main() -> None:
     setup_logging()
+    from lib.features import enabled
+    if not enabled("telegram", STATE_DIR) and not enabled("rss", STATE_DIR):
+        logging.info("Queued inputs paused; retaining queued work")
+        return
     env = load_env()
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
     api_key = env.get("DEEPSEEK_API_KEY", "")
@@ -260,6 +264,9 @@ def main() -> None:
         source_type = meta.get("source")
         if source_type not in ("telegram_group", "rss"):
             continue
+        if not enabled("rss" if source_type == "rss" else "telegram", STATE_DIR):
+            logging.info("%s input paused; retaining %s", source_type, path.name)
+            continue
 
         content = entry.get("content", "")
         arrived_at = meta.get("ts", "")
@@ -294,8 +301,7 @@ def main() -> None:
             continue
 
         if not ch_config:
-            logging.warning("[%s/%s] channel not in channels.json, skipping", channel, message_id)
-            path.unlink(missing_ok=True)
+            logging.warning("[%s/%s] channel missing or paused; retaining queued item", channel, message_id)
             continue
 
         logging.info("[%s/%s] arrived=%s | \"%s\"", channel, message_id, arrived_at, preview)

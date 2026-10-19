@@ -1,294 +1,225 @@
-#!/usr/bin/env python3
-"""System-level setup tests — run setup.sh in an isolated temp project."""
-
-import os, sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
+"""Behavioral installer checks: real wizard/configuration/verification and service adapter."""
+import itertools
 import json
 import os
-import shutil
-import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-_PROJECT = Path(__file__).resolve().parents[1]
+from tests.setup_harness import InstallHarness
+from lib.features import selected_services
 
 
 class TestSetupScript(unittest.TestCase):
-    """Run setup.sh in a temp directory and verify outputs."""
+    def setUp(self):
+        self.install=InstallHarness()
+        self.addCleanup(self.install.close)
 
-    @classmethod
-    def setUpClass(cls):
-        cls.tmpdir = Path(tempfile.mkdtemp(prefix="setup_test_"))
-        cls.project = cls.tmpdir / "tg-infra"
-        cls.project.mkdir(parents=True)
-        cls.state = cls.project / "state"
-        cls.home = cls.tmpdir / "home"
-        cls.systemd = cls.home / ".config" / "systemd" / "user"
-        cls.state.mkdir(parents=True)
+    def test_save_then_resume_and_start(self):
+        code, text=self.install.drive(self.install.fresh_answers())
+        self.assertEqual(code,0,text)
+        self.assertIn('Proposal saved privately',text)
+        self.assertFalse((self.install.data/'state/.env').exists())
+        self.assertFalse(self.install.systemd_log.exists())
+        self.assertNotIn('fixture-model-key',text)
+        self.assertNotIn('123:fixture',text)
+        calls=sum(c['kind']=='model' for c in self.install.calls())
+        code,text=self.install.drive([('A saved proposal','r'),('[S]tart / [C]ustomize','s'),("Press Enter once you've sent it",'')])
+        self.assertEqual(code,0,text)
+        self.assertIn('Input access and Telegram delivery verified',text)
+        self.assertEqual(calls,sum(c['kind']=='model' for c in self.install.calls()))
+        state=self.install.data/'state'
+        self.assertTrue((state/'.env').exists())
+        self.assertFalse((state/'email-triage-criteria.md').exists())
+        self.assertFalse((state/'it-jobs-session.session').exists())
+        manifest=json.loads((state/'installation.json').read_text())
+        systemd=json.loads(self.install.systemd_log.read_text())
+        self.assertEqual(set(systemd['active']),{n+'.timer' for n in selected_services(manifest)})
+        self.assertEqual((state/'.env').stat().st_mode & 0o777,0o600)
+        self.assertFalse((state/'setup/pending.json').exists())
+        self.assertFalse(any(c['kind'] in ('telegram_auth','graph','outlook_auth') for c in self.install.calls()))
 
-        # Copy project files
-        for name in ("setup.sh", "requirements.txt", ".gitignore",
-                     "email-ingest-wrap", "outlook_auth.py",
-                     "generate_profile.py",
-                     "bot_commands.py", "it_jobs_poller.py", "rss_poller.py", "feeds.json.example",
-                     "it_jobs_triage.py", "email_triage.py",
-                     "weekly_trend.py", "weekly_recovery.py", "feedback_poller.py",
-                     "setup_verify.py", "delivery_canary.py",
-                     "agent.py", "tools.py", "guardrails.py",
-                     "audit"):
-            src = _PROJECT / name
-            if src.exists():
-                if src.is_dir():
-                    shutil.copytree(src, cls.project / name)
-                else:
-                    shutil.copy2(src, cls.project / name)
-        shutil.copytree(_PROJECT / "lib", cls.project / "lib")
-        for name in ("it-jobs-criteria.md.example",
-                      "email-triage-criteria.md.example"):
-            src = _PROJECT / name
-            if src.exists():
-                shutil.copy2(src, cls.project / name)
+    def test_all_seven_input_combinations_activate_only_required_services(self):
+        for rss,telegram,email in itertools.product((False,True), repeat=3):
+            if not any((rss,telegram,email)): continue
+            with self.subTest(rss=rss,telegram=telegram,email=email):
+                install=InstallHarness()
+                try:
+                    code,text=install.drive(install.fresh_answers(rss=rss,telegram=telegram,email=email,action='s'))
+                    self.assertEqual(code,0,text)
+                    state=install.data/'state'
+                    manifest=json.loads((state/'installation.json').read_text())
+                    systemd=json.loads(install.systemd_log.read_text())
+                    self.assertEqual(set(systemd['active']),{n+'.timer' for n in selected_services(manifest)})
+                    kinds={c['kind'] for c in install.calls()}
+                    self.assertEqual('telegram_auth' in kinds,telegram)
+                    self.assertEqual('outlook_auth' in kinds,email)
+                    self.assertEqual('feed' in kinds,rss)
+                    self.assertEqual((state/'email-triage-criteria.md').exists(),email)
+                    self.assertEqual((state/'it-jobs-criteria.md').exists(),rss or telegram)
+                finally: install.close()
 
-        # Exercise generated config/units without installing packages, downloading
-        # browsers, or touching real Docker/systemd services.
-        commands = cls.tmpdir / "bin"
-        commands.mkdir()
-        for name, code in (("docker", 1), ("systemctl", 0)):
-            stub = commands / name
-            stub.write_text(f"#!/bin/sh\nexit {code}\n")
-            stub.chmod(0o755)
-        python = cls.project / "jobsmcp" / "bin" / "python3"
-        python.parent.mkdir(parents=True)
-        python.write_text(
-            '#!/bin/bash\n'
-            'if [[ "$1" == "-m" && ( "$2" == "pip" || "$2" == "playwright" ) ]]; then exit 0; fi\n'
-            f'exec {shlex.quote(sys.executable)} "$@"\n')
-        python.chmod(0o755)
-        cls.env = {
-            "HOME": str(cls.home),
-            "XDG_CONFIG_HOME": str(cls.home / ".config"),
-            "PATH": str(commands) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
-        }
-        result = subprocess.run(
-            ["bash", str(cls.project / "setup.sh")],
-            cwd=str(cls.project), capture_output=True, text=True,
-            timeout=30, env=cls.env, input="n\nn\nn\n"
-        )
-        cls.exit_code = result.returncode
-        cls.output = result.stdout + result.stderr
+    def test_reinstall_keep_no_model_calls_or_unwanted_services(self):
+        code,text=self.install.drive(self.install.fresh_answers(action='s'))
+        self.assertEqual(code,0,text)
+        state=self.install.data/'state'
+        before={p.name:p.read_bytes() for p in state.glob('*.json') if p.name!='setup-verification.json'}
+        calls=sum(c['kind']=='model' for c in self.install.calls())
+        code,text=self.install.drive([('[K]eep existing / [C]hange','k'),('[S]tart / [C]ustomize','s')])
+        self.assertEqual(code,0,text)
+        self.assertEqual(calls,sum(c['kind']=='model' for c in self.install.calls()))
+        self.assertTrue(all((state/name).read_bytes()==data for name,data in before.items()))
+        self.assertFalse(any('weekly' in u for u in json.loads(self.install.systemd_log.read_text())['active']))
 
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+    def test_cancel_changes_no_active_configuration(self):
+        answers=self.install.fresh_answers(action='q')
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,1,text)
+        self.assertFalse((self.install.data/'state/.env').exists())
+        self.assertFalse(self.install.systemd_log.exists())
 
-    def test_incomplete_setup_does_not_claim_success(self):
-        """A scaffold without credentials or preferences is not an activated install."""
-        self.assertEqual(self.exit_code, 1,
-                         f"setup.sh failed:\n{self.output[-1000:]}")
-        self.assertIn("Matching setup incomplete", self.output)
-        self.assertNotIn("the system is LIVE", self.output)
+    def test_failed_activation_restores_files_and_service_state(self):
+        self.install.systemd_log.with_suffix('.json.fail').touch()
+        answers=self.install.fresh_answers(action='s') + [('[S]tart / [C]ustomize','l')]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertIn('fixture activation failure',text)
+        self.assertFalse((self.install.data/'state/installation.json').exists())
+        self.assertEqual(json.loads(self.install.systemd_log.read_text())['active'],[])
+        self.assertEqual(json.loads(self.install.systemd_log.read_text())['enabled'],[])
 
-    def test_creates_env_template(self):
-        """.env contains all required keys."""
-        env = (self.state / ".env").read_text()
-        for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_API_ID",
-                     "DEEPSEEK_API_KEY", "USER_NAME",
-                     "OUTLOOK_CLIENT_ID", "OUTLOOK_EMAIL", "SEARXNG_URL"):
-            self.assertIn(key, env, f"missing {key} in .env template")
+    def test_delivery_failure_never_activates(self):
+        Path(str(self.install.provider_log)+'.delivery-fail').touch()
+        answers=self.install.fresh_answers(action='s')+[('[S]tart / [C]ustomize','l')]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertIn('CANARY FAILED',text)
+        self.assertFalse((self.install.data/'state/.env').exists())
+        calls=json.loads(self.install.systemd_log.read_text())['calls']
+        self.assertFalse(any(c[0] in ('enable','start','stop','disable') for c in calls))
 
-    def test_creates_channels_template(self):
-        """channels.json is created with all required fields."""
-        channels = json.loads((self.state / "channels.json").read_text())
-        self.assertIn("channels", channels)
-        ch = channels["channels"][0]
-        for field in ("username", "queue_prefix", "description",
-                       "message_format", "desired_roles", "acceptable_roles"):
-            self.assertIn(field, ch)
+    def test_stale_saved_proposal_does_not_overwrite_active_changes(self):
+        code,text=self.install.drive(self.install.fresh_answers())
+        self.assertEqual(code,0,text)
+        path=self.install.data/'state/.env'
+        path.write_text('USER_NAME=Changed while proposal was saved\n')
+        code,text=self.install.drive([('A saved proposal','r')])
+        self.assertEqual(code,1,text)
+        self.assertIn('Active settings changed',text)
+        self.assertEqual(path.read_text(),'USER_NAME=Changed while proposal was saved\n')
 
-    def test_creates_state_directories(self):
-        """State subdirectories are created."""
-        for subdir in ("message_queue", "messages", "audit"):
-            self.assertTrue((self.state / subdir).is_dir(),
-                            f"missing state/{subdir}")
-        self.assertTrue((self.project / "workspace" / "briefs").is_dir())
+    def test_weekly_reports_independent_of_email_input(self):
+        code,text=self.install.drive(self.install.fresh_answers(weekly=True,action='s'))
+        self.assertEqual(code,0,text)
+        units=json.loads(self.install.systemd_log.read_text())['active']
+        self.assertIn('weekly-trend.timer',units)
+        self.assertIn('feedback-poller.timer',units)
+        self.assertNotIn('email-ingest.timer',units)
+        paths=[c['path'] for c in self.install.calls() if c['kind']=='graph']
+        self.assertEqual(paths,['me/mailFolders/sentitems/messages'])
 
-    def test_idempotent_second_run(self):
-        """Running setup twice produces no errors."""
-        result = subprocess.run(
-            ["bash", str(self.project / "setup.sh")],
-            cwd=str(self.project), capture_output=True, text=True,
-            timeout=30,
-            env=self.env,
-            input="n\nn\nn\n")
-        self.assertEqual(result.returncode, 1)
-        self.assertIn("SKIP", result.stdout)
+    def test_briefings_and_canary_are_optional_and_verified(self):
+        code,text=self.install.drive(self.install.fresh_answers(briefings=True,canary=True,action='s'))
+        self.assertEqual(code,0,text)
+        self.assertIn('Briefing browser, search and PDF verified',text)
+        self.assertTrue((self.install.data/'skills/job-brief/references/profile-for-relevance.md').exists())
+        self.assertIn('delivery-canary.timer',json.loads(self.install.systemd_log.read_text())['active'])
+        kinds={c['kind'] for c in self.install.calls()}
+        self.assertTrue({'browser','search'} <= kinds)
 
-    def test_creates_systemd_units(self):
-        """Input workers and downstream service+timer pairs are created."""
-        for name in ("bot-commands", "telegram-poll", "job-triage",
-                      "rss-poll", "email-ingest", "weekly-trend"):
-            self.assertTrue((self.systemd / f"{name}.service").exists(),
-                            f"missing {name}.service")
-            self.assertTrue((self.systemd / f"{name}.timer").exists(),
-                            f"missing {name}.timer")
+    def test_invalid_flash_json_is_reported_and_never_activates(self):
+        Path(str(self.install.provider_log)+'.invalid-flash').touch()
+        answers=self.install.fresh_answers()
+        answers=answers[:next(i for i,(prompt,_) in enumerate(answers) if prompt.startswith('[A]pply'))]
+        answers += [('[R]etry now / Finish [L]ater','l'),('[S]tart / [C]ustomize','l')]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertIn('invalid JSON',text)
+        self.assertIn('Still needed:',text)
+        self.assertFalse((self.install.data/'source/interests.txt').exists())
+        self.assertFalse(self.install.systemd_log.exists())
+        from lib.setup_session import pending
+        self.assertIn('invalid JSON',(pending(self.install.data)/'state/setup.log').read_text())
 
-    def test_rss_preset_and_hourly_timer(self):
-        feeds = json.loads((self.state / "feeds.json").read_text())["feeds"]
-        self.assertEqual(feeds[0]["id"], "fossjobs")
-        self.assertEqual(feeds[0]["url"], "https://www.fossjobs.net/rss/all/")
-        service = (self.systemd / "rss-poll.service").read_text()
-        self.assertIn(str(self.project / "rss_poller.py"), service)
-        self.assertIn("TimeoutStartSec=15min", service)
-        self.assertIn("OnCalendar=*-*-* *:10:00", (self.systemd / "rss-poll.timer").read_text())
-        self.assertIn("rss_poller.py --due", service)
+    def test_reinstall_disable_preserves_history_then_reenable(self):
+        code,text=self.install.drive(self.install.fresh_answers(telegram=True,action='s'))
+        self.assertEqual(code,0,text)
+        state=self.install.data/'state'
+        (state/'message_queue').mkdir(exist_ok=True)
+        queue=state/'message_queue/retained.json'
+        queue.write_text('{"content":"queued job"}')
+        history=state/'history-fixture.json'
+        history.write_text('{"already_delivered":42}')
+        for telegram in (False,True):
+            calls=sum(c['kind']=='model' for c in self.install.calls())
+            answers=[('[K]eep existing / [C]hange','c'),('RSS/Atom job feeds?', 'y'),
+                     ('Telegram groups as an INPUT','y' if telegram else 'n'),('Outlook job-email input?','n'),
+                     ('Researched /briefme reports','n'),('Weekly reports and email feedback','n'),('Hourly Telegram delivery','n'),
+                     ('TELEGRAM_BOT_TOKEN [set',''),('DEEPSEEK_API_KEY [set','')]
+            if telegram: answers += [('TELEGRAM_API_ID [set',''),('TELEGRAM_API_HASH [set','')]
+            answers += [('USER_NAME [set','')]
+            if telegram: answers += [('[K]eep / [E]dit the source list','k')]
+            answers += [('[S]tart / [C]ustomize','s')]
+            code,text=self.install.drive(answers)
+            self.assertEqual(code,0,text)
+            self.assertEqual(calls,sum(c['kind']=='model' for c in self.install.calls()))
+            self.assertEqual('telegram-poll.timer' in json.loads(self.install.systemd_log.read_text())['active'],telegram)
+            self.assertEqual(queue.read_text(),'{"content":"queued job"}')
+            self.assertEqual(history.read_text(),'{"already_delivered":42}')
 
-    def test_email_ingest_service_uses_wrapper(self):
-        """email-ingest.service runs the shell wrapper, not email_triage.py."""
-        svc = (self.systemd / "email-ingest.service").read_text()
-        self.assertIn("email-ingest-wrap", svc)
-        self.assertNotIn("email_triage.py", svc)
+    def test_reinstall_verification_failure_restores_running_services(self):
+        code,text=self.install.drive(self.install.fresh_answers(action='s'))
+        self.assertEqual(code,0,text)
+        before=json.loads(self.install.systemd_log.read_text())
+        config=(self.install.data/'state/.env').read_bytes()
+        Path(str(self.install.provider_log)+'.feed-fail').touch()
+        code,text=self.install.drive([('[K]eep existing / [C]hange','k'),('[S]tart / [C]ustomize','s'),('[S]tart / [C]ustomize','l')])
+        self.assertEqual(code,0,text)
+        after=json.loads(self.install.systemd_log.read_text())
+        self.assertEqual(set(after['active']),set(before['active']))
+        self.assertEqual(set(after['enabled']),set(before['enabled']))
+        self.assertEqual((self.install.data/'state/.env').read_bytes(),config)
 
-    def test_systemd_units_have_no_hardcoded_paths(self):
-        """Systemd units use PROJECT_DIR, not /home/filippos."""
-        svc = (self.systemd / "bot-commands.service").read_text()
-        self.assertNotIn("/home/filippos", svc)
-        self.assertIn(str(self.project), svc)
-
-    def _configured_install(self, invalid_json=False):
-        """Run the real installer + generator in a child process; stub external edges."""
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        tmp = Path(temporary.name)
-        project = tmp / "project"
-        shutil.copytree(self.project, project)
-        state = project / "state"
-        (state / ".env").write_text("DEEPSEEK_API_KEY=fake-key\nUSER_NAME=Jane\nTELEGRAM_CHAT_ID=1\n"
-                                    "TELEGRAM_BOT_TOKEN=fake\nTELEGRAM_API_ID=1\nTELEGRAM_API_HASH=fake\n")
-        channels = json.loads((state / "channels.json").read_text())
-        channels["channels"][0]["username"] = "design_jobs"
-        (state / "channels.json").write_text(json.dumps(channels))
-        (state / "it-jobs-session.session").touch()
-        (state / "outlook-token.json").write_text("{}")
-        docs = tmp / "documents"
-        docs.mkdir()
-        (docs / "cv.txt").write_text("Jane is an accessibility designer and user researcher.")
-        # Substitute model/feed services; setup, validation and persistence stay real.
-        (project / "sitecustomize.py").write_text('''
-import json
-from pathlib import Path
-import lib
-import lib.direction
-import rss_poller
-def fake_model(model, prompt, key, timeout=90):
-    with Path("model-calls").open("a") as stream:
-        stream.write("call\\n")
-    if "List every fact" in prompt:
-        return "Jane: accessibility designer, user research."
-    if "career analyst" in prompt:
-        return "\\n".join("###FILE: " + name + "###\\nJane: accessibility designer, user research."
-                         for name in ("interests.txt", "skills.txt", "tech_stack.txt"))
-    if "Select RSS job feeds" in prompt:
-        return '{"choices":[{"id":"wwr:design","reason":"Accessibility design"}]}'
-    if "Generate Flash" in prompt:
-        if Path("invalid-model-response").exists():
-            return "invalid JSON"
-        sources = json.loads(prompt.split("SOURCES:\\n", 1)[1].split("\\n\\nReturn ONLY JSON:", 1)[0])
-        return json.dumps({"sources": [{"id": s["id"], "desired_roles": "Accessibility designer",
-                            "acceptable_roles": "User researcher"} for s in sources]})
-    return "# Candidate Profile\\nJane: accessibility design and research."
-lib.call_deepseek = fake_model
-lib.direction.call_deepseek = fake_model
-rss_poller.fetch_feed = lambda url, previous: (b'<rss version="2.0"><channel><title>Fixture</title><link>https://example.org/</link></channel></rss>', {})
-''')
-        (project / "setup_verify.py").write_text(
-            'from pathlib import Path\nPath("verification-called").touch()\n')
-        commands = tmp / "bin"
-        commands.mkdir()
-        (commands / "systemctl").write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$SETUP_TEST_SYSTEMCTL_LOG"\n')
-        (commands / "systemctl").chmod(0o755)
-        env = {**self.env, "PYTHONPATH": str(project), "XDG_CONFIG_HOME": str(tmp / "config"),
-               "PATH": str(commands) + os.pathsep + self.env["PATH"],
-               "SETUP_TEST_SYSTEMCTL_LOG": str(tmp / "systemctl.log")}
-        if invalid_json:
-            (project / "invalid-model-response").touch()
-        result = subprocess.run(["bash", str(project / "setup.sh")], cwd=project,
-                                env=env, input=f"y\n{docs}\n\nr\nr\n{'l' if invalid_json else 'a'}\n",
-                                capture_output=True, text=True, timeout=30)
-        return project, env, result
-
-    def test_install_apply_then_reinstall_keep(self):
-        project, env, result = self._configured_install()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertTrue((project / "verification-called").exists())
-        self.assertIn("enable --now job-triage.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
-        roles = json.loads((project / "state/channels.json").read_text())["channels"][0]
-        self.assertEqual(roles["desired_roles"], "Accessibility designer")
-        enabled = [f for f in json.loads((project / "state/feeds.json").read_text())["feeds"] if f["enabled"]]
-        self.assertEqual(enabled[0]["subscriptions"][0]["id"], "design")
-        calls = (project / "model-calls").read_bytes()
-        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
-                               input="\n", capture_output=True, text=True, timeout=30)
-        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertEqual((project / "model-calls").read_bytes(), calls)
-
-    def test_install_model_failure_does_not_activate_or_verify(self):
-        project, env, result = self._configured_install(invalid_json=True)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertFalse((project / "verification-called").exists())
-        self.assertNotIn("enable --now", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
-        self.assertIn("invalid JSON", result.stderr)
-        self.assertIn("invalid JSON", (project / "state/setup.log").read_text())
-        self.assertFalse((project / "source/interests.txt").exists())
-
-    def test_reinstall_migrates_old_generated_rss_units_and_restarts_timer(self):
-        project, env, result = self._configured_install()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        units = Path(env["XDG_CONFIG_HOME"]) / "systemd/user"
-        service, timer = units / "rss-poll.service", units / "rss-poll.timer"
-        current_service, current_timer = service.read_text(), timer.read_text()
-        old_service = current_service.replace("rss_poller.py --due", "rss_poller.py")
-        old_timer = current_timer.replace("OnCalendar=*-*-* *:10:00", "OnCalendar=*-*-* 06:10:00")
-        service.write_text(old_service)
-        timer.write_text(old_timer)
-        other_units = {p: p.read_bytes() for p in units.iterdir() if p not in (service, timer)}
-        calls = (project / "model-calls").read_bytes()
-        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
-                               input="\n", capture_output=True, text=True, timeout=30)
-        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertEqual(service.read_text(), current_service)
-        self.assertEqual(timer.read_text(), current_timer)
-        self.assertEqual(service.with_suffix(".service.pre-hourly").read_text(), old_service)
-        self.assertEqual(timer.with_suffix(".timer.pre-hourly").read_text(), old_timer)
-        self.assertTrue(all(p.read_bytes() == data for p, data in other_units.items()))
-        self.assertIn("Updated rss-poll.timer from daily to hourly", again.stdout)
-        self.assertIn("restart rss-poll.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
-        self.assertEqual((project / "model-calls").read_bytes(), calls)
-        # A second reinstall keeps both units and backups without another restart.
-        before = Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text()
-        last = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
-                              input="\n", capture_output=True, text=True, timeout=30)
-        self.assertEqual(last.returncode, 0, last.stdout + last.stderr)
-        self.assertNotIn("restart rss-poll.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text()[len(before):])
-        self.assertEqual(service.with_suffix(".service.pre-hourly").read_text(), old_service)
-
-    def test_reinstall_preserves_custom_rss_units_with_actionable_warning(self):
-        project, env, result = self._configured_install()
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        units = Path(env["XDG_CONFIG_HOME"]) / "systemd/user"
-        service, timer = units / "rss-poll.service", units / "rss-poll.timer"
-        service.write_text(service.read_text().replace("rss_poller.py --due", "rss_poller.py") + "Nice=10\n")
-        timer.write_text(timer.read_text().replace("OnCalendar=*-*-* *:10:00", "OnCalendar=*-*-* 06:10:00") + "# custom schedule\n")
-        before = {p: p.read_bytes() for p in (service, timer)}
-        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
-                               input="\n", capture_output=True, text=True, timeout=30)
-        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
-        self.assertTrue(all(p.read_bytes() == data for p, data in before.items()))
-        self.assertIn("check that ExecStart runs rss_poller.py --due", again.stdout)
-        self.assertIn("check that OnCalendar polls at least hourly", again.stdout)
+    def test_disabled_workers_make_no_provider_requests(self):
+        from lib.features import DEFAULTS
+        state=self.install.data/'state'
+        state.mkdir()
+        for script,feature in [('rss_poller.py','rss'),('it_jobs_poller.py','telegram'),
+                               ('email_triage.py','email'),('weekly_trend.py','weekly'),
+                               ('weekly_recovery.py','weekly'),('feedback_poller.py','weekly'),
+                               ('delivery_canary.py','canary'),('it_jobs_triage.py','rss')]:
+            with self.subTest(script=script):
+                features={**DEFAULTS,feature:False,'email':feature=='rss'}
+                (state/'installation.json').write_text(json.dumps({'version':1,'features':features,'schedules':{}}))
+                result=subprocess.run([sys.executable,str(self.install.code/script)],cwd=self.install.code,
+                                      env=self.install.env,capture_output=True,text=True,timeout=15)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertEqual(self.install.calls(),[])
 
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+class AuthenticationState(unittest.TestCase):
+    def test_refreshed_token_is_retained_when_configuration_rolls_back(self):
+        from lib import setup_session as session
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            (root/'state').mkdir()
+            (root/'state/.env').write_text('OUTLOOK_CLIENT_ID=app\nOUTLOOK_EMAIL=alex@example.test\n')
+            token=root/'state/outlook-token.json'
+            token.write_text('{"refresh_token":"original"}')
+            proposal=session.create(root)
+            # A worker refreshes between proposal creation and Start.
+            token.write_text('{"refresh_token":"worker"}')
+            session.sync_auth(root,proposal)
+            copied=proposal/'state/outlook-token.json'
+            self.assertEqual(json.loads(copied.read_text())['refresh_token'],'worker')
+            copied.write_text('{"refresh_token":"verification"}')
+            session.write_env(proposal/'state/.env',{'USER_NAME':'Alex'})
+            backup=session.apply(root,proposal)
+            session.restore(backup)
+            session.sync_auth(root,proposal,to_active=True)
+            self.assertEqual(json.loads(token.read_text())['refresh_token'],'verification')
+            self.assertNotIn('USER_NAME',(root/'state/.env').read_text())
+
+if __name__=='__main__': unittest.main()

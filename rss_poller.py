@@ -532,6 +532,11 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
 
 def main() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("rss", STATE_DIR):
+        logging.info("rss disabled by configuration")
+        return
     feeds = [feed for feed in load_feeds().values() if feed.get("enabled", True)]
     if not feeds:
         logging.info("No enabled RSS/Atom feeds in state/feeds.json.")

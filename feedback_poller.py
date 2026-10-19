@@ -82,6 +82,11 @@ def _strip_html(text: str) -> str:
 
 def main() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("weekly", STATE_DIR):
+        logging.info("weekly disabled by configuration")
+        return
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     if not api_key:

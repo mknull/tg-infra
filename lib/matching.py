@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .config import PRO_MODEL
+from .features import load as load_installation
 
 ROLE_FIELDS = ("desired_roles", "acceptable_roles")
 PROFILE_FILES = ("interests.txt", "skills.txt", "tech_stack.txt")
@@ -36,6 +37,9 @@ def source_configs(root: Path, overrides: dict[Path, str] | None = None):
             if not isinstance(ident, str) or not ident.strip() or ident in seen:
                 raise ValueError(f"{filename}: missing or duplicate {identity}")
             seen.add(ident)
+        installation = load_installation(root / "state")
+        if installation and not installation["features"][kind]:
+            entries = []
         yield path, config, entries, {e[identity]: e for e in defaults}, identity, kind
 
 
@@ -53,13 +57,17 @@ def matching_gaps(root: Path) -> list[str]:
         path = root / "source" / name
         if not path.exists() or not path.read_text().strip():
             gaps.append(f"source/{name}")
-    for name in ("it-jobs-criteria.md", "email-triage-criteria.md"):
+    installation = load_installation(root / "state")
+    selected = installation["features"] if installation else None
+    criteria = [name for name, needed in (("it-jobs-criteria.md", selected is None or selected["rss"] or selected["telegram"]),
+                                         ("email-triage-criteria.md", selected is None or selected["email"])) if needed]
+    for name in criteria:
         path = root / "state" / name
         if not path.exists() or not path.read_text().strip():
             gaps.append(f"state/{name}")
     try:
         feeds_path = root / "state/feeds.json"
-        if feeds_path.exists() and json.loads(feeds_path.read_text()).get("rss_selection_reviewed") is False:
+        if (selected is None or selected["rss"]) and feeds_path.exists() and json.loads(feeds_path.read_text()).get("rss_selection_reviewed") is False:
             gaps.append("RSS feed selection needs review")
         for path, _, entries, defaults, identity, _ in source_configs(root):
             for entry in entries:

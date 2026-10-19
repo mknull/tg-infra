@@ -366,6 +366,11 @@ def report_dead_letters(bot_token: str, deadletters: list[dict],
 
 def main() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("email", STATE_DIR):
+        logging.info("email disabled by configuration")
+        return
     env = load_env()
     api_key = env.get("DEEPSEEK_API_KEY", "")
     bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
