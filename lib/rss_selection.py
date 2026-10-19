@@ -175,6 +175,7 @@ def preview_backfill(root: Path, previous: dict, proposed: dict, ask) -> None:
             added.append(actual)
     if added:
         print("Backfill applies to new subscriptions. Recent keeps unknown dates; future-only records today's entries without sending them.")
+        print("Processing existing entries uses paid matching calls. All available can create a large initial batch; Future arrivals only avoids evaluating today's inventory.")
         mode = ask("[R]ecent 30 days / [F]uture arrivals only / [A]ll available / [L]ater [R]: ",
                    {"r": "recent", "f": "future", "a": "all", "l": "later"}, "r")
         if mode == "later":

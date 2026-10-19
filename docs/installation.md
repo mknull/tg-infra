@@ -1,7 +1,8 @@
 # Install and configure
 
 The simplest installation follows RSS job feeds and delivers relevant vacancies
-to your private Telegram bot chat. Telegram groups, Outlook input, researched
+to your private Telegram bot chat, the current installer's output medium.
+Telegram groups, Outlook input, researched
 briefings, weekly email reports and hourly test messages are optional.
 
 ## 1. Prepare the host and accounts
@@ -18,7 +19,8 @@ sudo apt-get install git python3 python3-venv python3-pip
 Prepare:
 
 - A funded [DeepSeek API account](https://platform.deepseek.com) and API key.
-- A dedicated Telegram bot: open **@BotFather** in Telegram, send `/newbot`,
+- A Telegram account and dedicated bot for the current delivery method: open
+  **@BotFather** in Telegram, send `/newbot`,
   follow its instructions and keep the token. Setup later identifies the exact
   bot you must message. RSS input does **not** need a Telegram API ID/hash.
 - Your **CV, letters and/or notes**, in a folder on this machine. Setup reads
@@ -58,6 +60,16 @@ Setup creates `jobsmcp`, installs Python dependencies, then guides you through:
    acceptable roles, and Pro's detailed criteria. Apply accepts these into the
    private installation proposal; Revise changes preferences before acceptance.
 6. **Installation review.** Choose Start, Customize, Save for Later, or Quit.
+
+Before preparing Python packages, setup explains the current delivery method,
+accounts, paid processing and host requirements. Each feature choice explains
+its extra requirements. Before paid matching generation, read-only checks verify
+user systemd/schedule support and, for briefings, PDF library availability and
+Docker access when local search is selected. A failure returns to the existing
+review menu: use Customize to change features or advanced configuration, then
+Customize → Matching to retry, or Save for Later. These checks do not start
+services, download Chromium or make model calls. PDF extraction happens before
+model calls too; setup explains the text alternative if it fails.
 
 **Start** authenticates selected inputs, checks read access, asks you to message
 your bot if pairing is needed, and sends a real test message. It then activates

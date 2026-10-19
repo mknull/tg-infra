@@ -55,9 +55,15 @@ class Systemd:
         return self.prefix + name + "." + suffix
 
     def preflight(self, manifest: dict) -> None:
-        self.ctl("show-environment")
+        try:
+            self.ctl("show-environment")
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("Scheduling needs Linux with a working user systemd manager. Run setup as your normal user; check `systemctl --user show-environment` in that login session.") from exc
         for schedule in {**SCHEDULES, **manifest["schedules"]}.values():
-            result = subprocess.run(["systemd-analyze", "calendar", schedule], capture_output=True, text=True, timeout=10)
+            try:
+                result = subprocess.run(["systemd-analyze", "calendar", schedule], capture_output=True, text=True, timeout=10)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise ValueError("Schedule validation needs a working `systemd-analyze` command; check your systemd installation.") from exc
             if result.returncode:
                 raise ValueError("Invalid schedule: " + schedule)
 
@@ -191,16 +197,27 @@ class Systemd:
         return errors
 
 
+def check_briefing_dependencies(env: dict) -> None:
+    """Read-only local checks before generation or optional downloads."""
+    url = env.get("SEARXNG_URL", "http://localhost:8080/search")
+    if url in ("http://localhost:8080/search", "http://127.0.0.1:8080/search"):
+        try:
+            subprocess.run(["docker", "ps"], check=True, capture_output=True, timeout=10)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise ValueError("Briefings need accessible Docker or a custom SEARXNG_URL. Install/start Docker and make `docker ps` work without sudo, or set a JSON-enabled /search endpoint in Customize > Edit advanced files > state/.env. You can also disable briefings.") from exc
+    try:
+        from weasyprint import HTML
+    except (ImportError, OSError) as exc:
+        raise ValueError("Briefing PDF libraries are missing. Ubuntu/Debian: sudo apt-get install libpango-1.0-0 libpangoft2-1.0-0. See docs/installation.md, or disable briefings.") from exc
+
+
 def prepare_briefings(code: Path, data: Path, env: dict) -> None:
     """Optional local dependencies, run only after Start is selected."""
+    check_briefing_dependencies(env)
     subprocess.run([str(code / "jobsmcp/bin/python3"), "-m", "playwright", "install", "chromium"], check=True)
     url = env.get("SEARXNG_URL", "http://localhost:8080/search")
     if url not in ("http://localhost:8080/search", "http://127.0.0.1:8080/search"):
         return
-    try:
-        subprocess.run(["docker", "ps"], check=True, capture_output=True)
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise ValueError("Briefings need accessible Docker or a custom SEARXNG_URL. Install Docker and check `docker ps`, then retry.") from exc
     exists = subprocess.run(["docker", "container", "inspect", "searxng"], capture_output=True)
     if exists.returncode == 0:
         subprocess.run(["docker", "start", "searxng"], check=True, capture_output=True)

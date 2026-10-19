@@ -7,6 +7,9 @@ packaging and schedulers for other operating systems are not implemented.
 | --- | --- |
 | All seven nonempty RSS/Telegram/Outlook input combinations | Process tests run the real shell bootstrap, wizard, generation, verification and unit adapter; assert only required credentials/authentication, criteria and timers. |
 | Documents and matching | Existing profile/matching tests exercise extraction and generation; installer tests enter a written profile, review RSS selection and Flash/Pro settings. Invalid Flash JSON is reported and logged, with no activation or partial publication. |
+| Prerequisites before generation | Missing user systemd, unavailable local Docker and missing PDF libraries block model calls and browser downloads while allowing Save. An unreadable PDF explains the text alternative before any paid call. |
+| Recovery through existing controls | After a Docker failure, Customize can disable briefings or configure an existing search endpoint, then Matching/Start succeeds. RSS-only setup succeeds with Docker and PDF support unavailable. |
+| Commitment visibility | Process tests check that delivery/account guidance precedes feature choice, generation cost disclosure precedes confirmation, and backfill cost disclosure precedes the intake choice. |
 | Save/resume and cancel | Active configuration stays absent/unchanged; Resume reuses the generated proposal without more model calls; credentials are absent from terminal review. |
 | Reinstall Keep | No generation calls; configuration/history retained; selected timers only. |
 | Disable/re-enable an input | Installer preserves queued work/history. RSS process test pauses collection and triage, makes no provider requests, then resumes and delivers the retained job; audit reports the pause. |
@@ -18,9 +21,21 @@ packaging and schedulers for other operating systems are not implemented.
 | Existing service files | Old daily RSS units migrate; customized generated units survive; contradictory schedule overrides produce an explicit error. |
 | Real systemd | Unique temporary units verify enable/start, actual harmless worker execution, feature changes, restoration of existing timers, and cleanup of a fresh installation. Paths include spaces, `%` and `$`. |
 
-Full regression: **377 tests run, 372 passed, five skipped** in a disposable copy with
+Initial installer full regression: **377 tests run, 372 passed, five skipped** in a disposable copy with
 loopback networking permitted. The real-systemd test is opt-in and was run
 separately. `git diff --check` also passed.
+
+Prerequisite/visibility follow-up: **62 tests run, 61 passed, one skipped** in a
+disposable copy, covering installer processes, service-file handling, matching,
+RSS selection and profile generation. The skip is the opt-in real-systemd test;
+that live-manager check was not repeated for this follow-up. The five new
+behavioral tests also passed separately, including three missing-prerequisite
+subcases. Documentation links and shell-command syntax were checked.
+
+The prerequisite checks make no provider requests or service changes. Browser
+installation, browser system-library checks and live account verification remain
+at Start and are disclosed before generation. The early PDF check verifies that
+WeasyPrint and its libraries load; actual PDF rendering is still checked at Start.
 
 Installer process tests replace external provider transports, Docker and systemd;
 they do not replace wizard, validation, generation or activation logic. The

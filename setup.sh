@@ -14,6 +14,16 @@ fi
 if [[ "${1:-}" == '--help' ]]; then
     exec python3 "$PROJECT_DIR/setup_cli.py" --help
 fi
+cat <<'NOTICE'
+Personal job alerts: follow selected sources and match jobs to your profile.
+This installer currently uses Telegram for alerts and commands. Prepare a Telegram
+account and dedicated bot token, a funded DeepSeek API key, and CV/notes or a written profile.
+Generation and ongoing matching use paid API calls and send text to DeepSeek.
+Scheduled operation needs Linux with user systemd; keep the host awake/online and the checkout in place.
+Setup first prepares jobsmcp/ and shared Python packages. Review features before any services start.
+Preparation details: README-v2.md and docs/installation.md. Run setup as your normal user, without sudo.
+
+NOTICE
 PYTHON="$PROJECT_DIR/jobsmcp/bin/python3"
 if [[ ! -x "$PYTHON" ]]; then
     if ! python3 -m venv "$PROJECT_DIR/jobsmcp"; then

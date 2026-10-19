@@ -22,12 +22,19 @@ LABELS = {
     "weekly": "Weekly reports and email feedback (uses Outlook)",
     "canary": "Hourly Telegram delivery test messages",
 }
+FEATURE_HELP = {
+    "rss": "Public RSS feeds need no source account. You will review feed choices and how much existing inventory to process.",
+    "telegram": "If enabled: needs your Telegram user API ID/hash, phone/code/2FA login and access to source usernames; separate from bot delivery.",
+    "email": "If enabled: needs an Outlook mailbox, an Entra app and a prepared job-alert folder. Email text is sent to DeepSeek for matching.",
+    "briefings": "If enabled: needs PDF system libraries and SearXNG search. Local search needs Docker working without sudo and localhost:8080 available; alternatively set SEARXNG_URL in Customize > Edit advanced files. Start downloads Chromium and checks browser libraries.",
+    "weekly": "If enabled: needs an Outlook mailbox and Entra app even without email input; sends paid model-generated reports to your email and reads replies.",
+}
 HINTS = {
     "TELEGRAM_BOT_TOKEN": "Create a dedicated bot with @BotFather /newbot.",
     "DEEPSEEK_API_KEY": "Create an API key and add credit at https://platform.deepseek.com.",
     "TELEGRAM_API_ID": "Obtain API ID and hash from https://my.telegram.org/apps.",
     "TELEGRAM_API_HASH": "The user API hash is separate from your bot token.",
-    "OUTLOOK_CLIENT_ID": "Microsoft Entra app client ID: allow public client flows; delegated Mail.Read and Mail.Send permissions.",
+    "OUTLOOK_CLIENT_ID": "Register an Entra app supporting your account; allow public client flows and delegated Mail.Read and Mail.Send (both requested even for input only). No client secret. Instructions: docs/installation.md, Optional features.",
     "OUTLOOK_EMAIL": "Your Outlook mailbox address; also the weekly-report recipient.",
     "OUTLOOK_FOLDER": "A dedicated mail folder's exact name. Your entire Inbox requires explicit confirmation in advanced configuration.",
 }
@@ -98,6 +105,8 @@ class Wizard:
         print("\nChoose your inputs and optional features. Matched jobs are delivered to your Telegram bot chat.")
         while True:
             for key in FEATURES:
+                if key in FEATURE_HELP:
+                    print(FEATURE_HELP[key])
                 default = "y" if manifest["features"][key] else "n"
                 manifest["features"][key] = ask(f"{LABELS[key]}? [y/n] [{default.upper()}]: ", "yn", default) == "y"
             try:
@@ -155,6 +164,16 @@ class Wizard:
             return ["Configuration is invalid: " + str(exc)]
 
     def matching(self) -> bool:
+        from .setup_services import Systemd, check_briefing_dependencies
+        try:
+            manifest = load(self.proposal / "state")
+            Systemd(self.code, self.root).preflight(manifest)
+            if manifest["features"]["briefings"]:
+                check_briefing_dependencies(load_env(self.proposal / "state/.env"))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            print("Prerequisites need attention before paid generation: " + str(exc))
+            print("Use Customize to change features or edit advanced files, then Customize > Matching to retry; or Save for Later. No generation started.")
+            return False
         print("\nPrepare matching in this private proposal. Applying the matching review here does not change the running installation.")
         return self.child("generate_profile.py", "--setup")
 
@@ -173,8 +192,18 @@ class Wizard:
                     print(feed.get("name", feed["id"]) + ": " + ", ".join(sub["url"] for sub in feed_subscriptions(feed)))
         if manifest["schedules"]:
             print("Custom schedules: " + json.dumps(manifest["schedules"]))
+        if manifest["features"]["briefings"]:
+            url = load_env(self.proposal / "state/.env").get("SEARXNG_URL", "http://localhost:8080/search")
+            print("Start downloads Chromium and verifies browser, search and PDF support; missing browser system libraries may require OS package installation.")
+            if url in ("http://localhost:8080/search", "http://127.0.0.1:8080/search"):
+                print("It also starts/reuses or creates the searxng Docker container on localhost:8080. Downloads and the container remain if verification fails or briefings are later disabled.")
+            else:
+                print("Search uses your configured SearXNG endpoint; no local search container will be created.")
         print("Start verifies selected inputs and sends a real Telegram delivery test, then enables scheduled paid processing.")
+        print("It installs user services/timers for the selected features. Keep this host awake/online; setup prints how to continue after logout.")
+        print("Ongoing matching sends job text and profile/preferences to DeepSeek. There is no application-wide spending cap; source volume and backfill affect cost.")
         print("Save keeps this proposal separate; active settings and services continue unchanged.")
+        print("Save or Quit cannot undo paid generation already performed. Saved credentials/profiles and processing history are local files; protect them and monitor disk usage.")
 
     def customize(self) -> None:
         action = ask("Customize [F]eatures/credentials / [M]atching / [E]dit advanced files / [B]ack [B]: ", "fmeb", "b")

@@ -142,6 +142,7 @@ def _run_setup(generator) -> int:
     if not profile_complete or force:
         if guided:
             print("\nYour profile: use your CV, letters or notes to configure your job search. Supported: PDF with text, TXT, MD, RST; immediate files only.")
+            print("PDFs need pdftotext (Ubuntu/Debian: sudo apt-get install poppler-utils). Convert DOCX/scans to text first, or use :text below.")
             print("Enter a folder path, or :text to write a profile here. Documents and preferences will be sent to DeepSeek; generation incurs API charges.")
         prompt = "Documents directory (Enter to reuse current profile): " if profile_complete else "Documents directory (CV, letters, or text notes): "
         docs = input(prompt).strip()
@@ -173,6 +174,7 @@ def _run_setup(generator) -> int:
     feedback = input("Additional preferences (roles, alternatives, exclusions; Enter to keep current preferences): ").strip()
     if guided:
         print("Generation sends the selected document text/profile, source descriptions and preferences to DeepSeek using paid API calls.")
+        print("These calls are billed even if you later save or cancel the proposal. No application-wide spending cap is enforced.")
         if _ask("Generate this proposal now? [Y/n]: ", {"y": "yes", "n": "later"}, "y") != "yes":
             return 1
     expected = generator.generation_snapshot()

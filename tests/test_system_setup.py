@@ -17,12 +17,23 @@ class TestSetupScript(unittest.TestCase):
         self.install=InstallHarness()
         self.addCleanup(self.install.close)
 
+    def assert_no_activation(self, install):
+        self.assertFalse((install.data/'state/.env').exists())
+        if install.systemd_log.exists():
+            state=json.loads(install.systemd_log.read_text())
+            self.assertEqual(state['active'],[])
+            self.assertEqual(state['enabled'],[])
+            self.assertTrue(all(c[0]=='show-environment' for c in state['calls']))
+
     def test_save_then_resume_and_start(self):
         code, text=self.install.drive(self.install.fresh_answers())
         self.assertEqual(code,0,text)
         self.assertIn('Proposal saved privately',text)
-        self.assertFalse((self.install.data/'state/.env').exists())
-        self.assertFalse(self.install.systemd_log.exists())
+        self.assert_no_activation(self.install)
+        self.assertLess(text.index('This installer currently uses Telegram'),text.index('RSS/Atom job feeds?'))
+        self.assertLess(text.index('These calls are billed'),text.index('Generate this proposal now?'))
+        self.assertLess(text.index('Processing existing entries uses paid matching'),text.index('[R]ecent 30 days'))
+        self.assertIn('no application-wide spending cap',text)
         self.assertNotIn('fixture-model-key',text)
         self.assertNotIn('123:fixture',text)
         calls=sum(c['kind']=='model' for c in self.install.calls())
@@ -77,8 +88,93 @@ class TestSetupScript(unittest.TestCase):
         answers=self.install.fresh_answers(action='q')
         code,text=self.install.drive(answers)
         self.assertEqual(code,1,text)
-        self.assertFalse((self.install.data/'state/.env').exists())
-        self.assertFalse(self.install.systemd_log.exists())
+        self.assert_no_activation(self.install)
+
+    def test_missing_prerequisites_block_generation_and_downloads_but_allow_save(self):
+        for missing in ('systemd','docker','pdf'):
+            with self.subTest(missing=missing):
+                install=InstallHarness()
+                try:
+                    marker={'systemd':str(install.systemd_log)+'.unavailable',
+                            'docker':str(install.docker_log)+'.fail',
+                            'pdf':str(install.provider_log)+'.pdf-missing'}[missing]
+                    Path(marker).touch()
+                    answers=install.fresh_answers(briefings=missing!='systemd')
+                    answers=answers[:next(i for i,(prompt,_) in enumerate(answers) if prompt.startswith('Generate job-matching'))]
+                    code,text=install.drive(answers+[('[S]tart / [C]ustomize','l')])
+                    self.assertEqual(code,0,text)
+                    self.assertIn('Prerequisites need attention before paid generation',text)
+                    self.assertIn({'systemd':'working user systemd manager','docker':'docker ps','pdf':'libpango'}[missing],text)
+                    self.assertNotIn('Generate job-matching instructions',text)
+                    self.assertEqual(install.calls(),[])
+                    self.assertFalse(install.download_log.exists())
+                    self.assert_no_activation(install)
+                    self.assertTrue((install.data/'state/setup/pending.json').exists())
+                finally:
+                    install.close()
+
+    def test_disabling_briefings_recovers_from_missing_docker(self):
+        Path(str(self.install.docker_log)+'.fail').touch()
+        answers=self.install.fresh_answers(briefings=True)
+        answers=answers[:next(i for i,(prompt,_) in enumerate(answers) if prompt.startswith('Generate job-matching'))]
+        answers += [('[S]tart / [C]ustomize','c'),('Customize [F]eatures','f'),
+                    ('RSS/Atom job feeds?','y'),('Telegram groups as an INPUT','n'),('Outlook job-email input?','n'),
+                    ('Researched /briefme reports','n'),('Weekly reports and email feedback','n'),('Hourly Telegram delivery','n'),
+                    ('TELEGRAM_BOT_TOKEN [set',''),('DEEPSEEK_API_KEY [set',''),('USER_NAME [set',''),
+                    ('[S]tart / [C]ustomize','c'),('Customize [F]eatures','m')]
+        matching=self.install.fresh_answers(action='s')
+        answers += matching[next(i for i,(prompt,_) in enumerate(matching) if prompt.startswith('Generate job-matching')):]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertLess(text.index('No generation started'),text.index('Generate job-matching instructions'))
+        self.assertEqual(self.install.docker_log.read_text().splitlines(),['["ps"]'])
+        self.assertFalse(self.install.download_log.exists())
+        self.assertFalse(json.loads((self.install.data/'state/installation.json').read_text())['features']['briefings'])
+
+    def test_custom_search_recovers_without_local_docker(self):
+        Path(str(self.install.docker_log)+'.fail').touch()
+        editor=self.install.commands/'edit-search'
+        editor.write_text('#!'+sys.executable+' -S\nimport sys\nfrom pathlib import Path\np=Path(sys.argv[1])\np.write_text(p.read_text().replace("http://localhost:8080/search", "https://search.example.test/search"))\n')
+        editor.chmod(0o755)
+        self.install.env['VISUAL']=str(editor)
+        answers=self.install.fresh_answers(briefings=True)
+        answers=answers[:next(i for i,(prompt,_) in enumerate(answers) if prompt.startswith('Generate job-matching'))]
+        answers += [('[S]tart / [C]ustomize','c'),('Customize [F]eatures','e'),('File number','1'),
+                    ('[S]tart / [C]ustomize','c'),('Customize [F]eatures','m')]
+        matching=self.install.fresh_answers(briefings=True,action='s')
+        answers += matching[next(i for i,(prompt,_) in enumerate(matching) if prompt.startswith('Generate job-matching')):]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertIn('no local search container will be created',text)
+        self.assertIn('Briefing browser, search and PDF verified',text)
+        self.assertEqual(self.install.docker_log.read_text().splitlines(),['["ps"]'])
+        self.assertIn('install chromium',self.install.download_log.read_text())
+
+    def test_rss_only_needs_no_docker_or_pdf_runtime(self):
+        Path(str(self.install.docker_log)+'.fail').touch()
+        Path(str(self.install.provider_log)+'.pdf-missing').touch()
+        code,text=self.install.drive(self.install.fresh_answers(action='s'))
+        self.assertEqual(code,0,text)
+        self.assertFalse(self.install.docker_log.exists())
+        self.assertFalse(self.install.download_log.exists())
+        self.assertFalse(any(c['kind'] in ('browser','search','graph','telegram_auth') for c in self.install.calls()))
+
+    def test_unreadable_pdf_explains_text_alternative_before_paid_calls(self):
+        docs=self.install.path/'documents'
+        docs.mkdir()
+        (docs/'cv.pdf').write_bytes(b'%PDF-fixture')
+        command=self.install.commands/'pdftotext'
+        command.write_text('#!/bin/sh\nexit 127\n')
+        command.chmod(0o755)
+        answers=self.install.fresh_answers()
+        answers=answers[:next(i for i,(prompt,_) in enumerate(answers) if prompt.startswith('Documents directory'))]
+        answers += [('Documents directory',str(docs)),('[S]tart / [C]ustomize','l')]
+        code,text=self.install.drive(answers)
+        self.assertEqual(code,0,text)
+        self.assertLess(text.index('PDFs need pdftotext'),text.index('Documents directory'))
+        self.assertIn('supply TXT/MD notes instead',text)
+        self.assertEqual(self.install.calls(),[])
+        self.assert_no_activation(self.install)
 
     def test_failed_activation_restores_files_and_service_state(self):
         self.install.systemd_log.with_suffix('.json.fail').touch()
@@ -139,7 +235,7 @@ class TestSetupScript(unittest.TestCase):
         self.assertIn('invalid JSON',text)
         self.assertIn('Still needed:',text)
         self.assertFalse((self.install.data/'source/interests.txt').exists())
-        self.assertFalse(self.install.systemd_log.exists())
+        self.assert_no_activation(self.install)
         from lib.setup_session import pending
         self.assertIn('invalid JSON',(pending(self.install.data)/'state/setup.log').read_text())
 

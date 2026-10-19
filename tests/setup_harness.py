@@ -14,7 +14,7 @@ from pathlib import Path
 PROJECT = Path(__file__).resolve().parents[1]
 
 PROVIDERS = r'''
-import io, json, os, sqlite3, urllib.request
+import io, json, os, sqlite3, sys, types, urllib.request
 from pathlib import Path
 
 def record(kind, **values):
@@ -68,11 +68,16 @@ def urlopen(request, *args, **kwargs):
         record('feed')
         if Path(os.environ['SETUP_PROVIDER_LOG'] + '.feed-fail').exists(): raise OSError('fixture feed outage')
         return Response(b'<rss version="2.0"><channel><title>Design jobs</title><link>https://example.test/</link><item><guid>design1</guid><title>Accessibility designer</title><link>https://example.test/design1</link><description>Paid design and research role. Work on accessible products. Full description of responsibilities and required qualifications for the design team.</description></item></channel></rss>',url)
-    if url.startswith('http://localhost:8080/search'):
+    if url.startswith(('http://localhost:8080/search', 'https://search.example.test/search')):
         record('search')
         return Response({'results':[{'title':'Fixture jobs','url':'https://example.test/jobs','content':'Jobs'}]},url)
     raise AssertionError('Unexpected provider request: ' + url)
 urllib.request.urlopen = urlopen
+if Path(os.environ['SETUP_PROVIDER_LOG'] + '.pdf-missing').exists():
+    module = types.ModuleType('weasyprint')
+    def unavailable(name): raise OSError('fixture missing PDF libraries')
+    module.__getattr__ = unavailable
+    sys.modules['weasyprint'] = module
 try:
     import telethon
     class Client:
@@ -107,7 +112,7 @@ args=sys.argv[1:]; args.remove('--user')
 command=args[0]; unit=args[1] if len(args)>1 else ''
 state['calls'].append(args)
 path.write_text(json.dumps(state))
-if command=='show-environment': sys.exit(0)
+if command=='show-environment': sys.exit(1 if Path(str(path)+'.unavailable').exists() else 0)
 if command in ('is-active','is-enabled'):
     present=unit in state['active' if command=='is-active' else 'enabled']
     print(('active' if command=='is-active' else 'enabled') if present else 'inactive')
@@ -141,14 +146,22 @@ class InstallHarness:
         ctl = self.commands / 'systemctl'
         ctl.write_text('#!' + sys.executable + ' -S\n' + SYSTEMCTL); ctl.chmod(0o755)
         docker = self.commands / 'docker'
-        docker.write_text('#!/bin/sh\nexit 0\n'); docker.chmod(0o755)
+        docker.write_text('#!' + sys.executable + ' -S\n' +
+                          "import json, os, sys\nfrom pathlib import Path\n"
+                          "path = Path(os.environ['SETUP_DOCKER_LOG'])\n"
+                          "with path.open('a') as log: log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+                          "sys.exit(1 if Path(str(path) + '.fail').exists() else 0)\n")
+        docker.chmod(0o755)
         python = self.code / 'jobsmcp/bin/python3'; python.parent.mkdir(parents=True)
-        python.write_text('#!/bin/bash\nif [[ "$1" == "-m" && ( "$2" == "pip" || "$2" == "playwright" ) ]]; then exit 0; fi\nexec ' + shlex.quote(sys.executable) + ' "$@"\n'); python.chmod(0o755)
+        python.write_text('#!/bin/bash\nif [[ "$1" == "-m" && "$2" == "playwright" ]]; then printf "%s\\n" "$*" >> "$SETUP_DOWNLOAD_LOG"; exit 0; fi\nif [[ "$1" == "-m" && "$2" == "pip" ]]; then exit 0; fi\nexec ' + shlex.quote(sys.executable) + ' "$@"\n'); python.chmod(0o755)
         self.provider_log = self.path / 'providers.jsonl'
         self.systemd_log = self.path / 'systemd.json'
+        self.docker_log = self.path / 'docker.jsonl'
+        self.download_log = self.path / 'downloads.txt'
         self.env = {**os.environ, 'TG_INFRA_DATA_DIR':str(self.data), 'PYTHONPATH':str(self.code),
                     'XDG_CONFIG_HOME':str(self.path/'config'), 'PATH':str(self.commands)+os.pathsep+os.environ['PATH'],
-                    'SETUP_PROVIDER_LOG':str(self.provider_log), 'SETUP_FAKE_SYSTEMD':str(self.systemd_log)}
+                    'SETUP_PROVIDER_LOG':str(self.provider_log), 'SETUP_FAKE_SYSTEMD':str(self.systemd_log),
+                    'SETUP_DOCKER_LOG':str(self.docker_log), 'SETUP_DOWNLOAD_LOG':str(self.download_log)}
 
     def close(self): self.temporary.cleanup()
 

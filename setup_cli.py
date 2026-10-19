@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guided configuration; the Linux adapter is loaded only when starting."""
+"""Guided configuration with prerequisite checks before paid generation."""
 
 import argparse
 
