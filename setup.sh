@@ -248,14 +248,14 @@ UNITS=(
     [delivery-canary]="Synthetic delivery check (audit --health alerts if it breaks)|*-*-* *:10:00|$PYTHON $PROJECT_DIR/delivery_canary.py"
 )
 
+RSS_UNITS_UPDATED=false
 for name in "${!UNITS[@]}"; do
     IFS='|' read -r desc schedule exec_cmd timeout <<< "${UNITS[$name]}"
     timeout_line=""
     [[ -n "$timeout" ]] && timeout_line="TimeoutStartSec=$timeout"
 
     svc="$SYSTEMD_DIR/$name.service"
-    if [[ ! -f "$svc" ]]; then
-        cat > "$svc" <<UNIT
+    service_text=$(cat <<UNIT
 [Unit]
 Description=$desc
 After=network-online.target
@@ -268,14 +268,24 @@ $timeout_line
 StandardOutput=append:$STATE_DIR/$name.log
 StandardError=append:$STATE_DIR/$name.log
 UNIT
+    )
+    if [[ ! -f "$svc" ]]; then
+        printf '%s\n' "$service_text" > "$svc"
         log "Created $svc"
+    elif [[ "$name" == "rss-poll" && "$(<"$svc")" == "${service_text/"rss_poller.py --due"/"rss_poller.py"}" ]]; then
+        cp -p "$svc" "$svc.pre-hourly"
+        printf '%s\n' "$service_text" > "$svc"
+        RSS_UNITS_UPDATED=true
+        log "Updated rss-poll.service to respect each subscription's cadence (backup: $svc.pre-hourly)"
     else
         skip "$name.service exists"
+        if [[ "$name" == "rss-poll" && "$(<"$svc")" != "$service_text" ]]; then
+            log "WARNING: custom $svc preserved; check that ExecStart runs rss_poller.py --due."
+        fi
     fi
 
     tmr="$SYSTEMD_DIR/$name.timer"
-    if [[ ! -f "$tmr" ]]; then
-        cat > "$tmr" <<UNIT
+    timer_text=$(cat <<UNIT
 [Unit]
 Description=Run $name every interval
 
@@ -286,9 +296,20 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 UNIT
+    )
+    if [[ ! -f "$tmr" ]]; then
+        printf '%s\n' "$timer_text" > "$tmr"
         log "Created $tmr"
+    elif [[ "$name" == "rss-poll" && "$(<"$tmr")" == "${timer_text/"OnCalendar=$schedule"/"OnCalendar=*-*-* 06:10:00"}" ]]; then
+        cp -p "$tmr" "$tmr.pre-hourly"
+        printf '%s\n' "$timer_text" > "$tmr"
+        RSS_UNITS_UPDATED=true
+        log "Updated rss-poll.timer from daily to hourly (backup: $tmr.pre-hourly)"
     else
         skip "$name.timer exists"
+        if [[ "$name" == "rss-poll" && "$(<"$tmr")" != "$timer_text" ]]; then
+            log "WARNING: custom $tmr preserved; check that OnCalendar polls at least hourly."
+        fi
     fi
 done
 
@@ -314,6 +335,12 @@ if $MATCHING_READY && "$PYTHON" "$PROJECT_DIR/setup_verify.py" verify; then
     ACTIVATED=true
     for name in "${!UNITS[@]}"; do
         if systemctl --user enable --now "$name.timer" 2>/dev/null; then
+            if [[ "$name" == "rss-poll" ]] && $RSS_UNITS_UPDATED; then
+                if ! systemctl --user restart "$name.timer" 2>/dev/null; then
+                    log "WARNING: could not restart the updated rss-poll.timer"
+                    ACTIVATED=false
+                fi
+            fi
             log "  activated $name.timer"
         else
             skip "could not activate $name.timer"

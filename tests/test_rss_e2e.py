@@ -69,6 +69,7 @@ class TestRssCLI(unittest.TestCase):
         self.requests = []
         self.deliveries = []
         self.model_down = False
+        self.flash_answer = {"decision": "pass_to_pro", "reason": "Engineering vacancy"}
         self.pro_answer = {"decision": "send", "reason": "Matches criteria",
                            "message": "A suitable engineering role.",
                            "tags": {"role_type": "engineering"}}
@@ -107,7 +108,7 @@ class TestRssCLI(unittest.TestCase):
                         self.respond(503, b"Try later")
                         return
                     if payload["model"] == "deepseek-v4-flash":
-                        answer = {"decision": "pass_to_pro", "reason": "Engineering vacancy"}
+                        answer = owner.flash_answer
                     elif payload["model"] == "deepseek-v4-pro":
                         answer = owner.pro_answer
                     else:
@@ -199,6 +200,31 @@ class TestRssCLI(unittest.TestCase):
         self.assertEqual(index.read_bytes(), previous)
         self.assertEqual(self.files("message_queue"), [])
         self.assertIn("RSS fixture", self.run_cli("audit", "--health", code=1))
+
+    def test_large_feed_item_reaches_delivery_with_bounded_flash_calls(self):
+        from tests.test_rss_subscriptions import xml
+        self.feeds["/feed"] = xml("&lt;br/&gt;".join(
+            ["Ambiguous vacancy details; responsibilities still to follow."] * 3000 +
+            ["LAST REQUIREMENT: fluent Greek"]))
+        self.flash_answer = {"decision": "read_more", "reason": "Need more context"}
+        self.run_cli("rss_poller.py")
+        queued, = self.files("message_queue")
+        posting = json.loads(queued.read_text())["content"]
+        self.run_cli("it_jobs_triage.py")
+        requests = [body for method, path, body in self.requests
+                    if method == "POST" and path == "/v1/chat/completions"]
+        self.assertEqual([body["model"] for body in requests], ["deepseek-v4-flash"] * 4 + ["deepseek-v4-pro"])
+        self.assertIn(posting, requests[-1]["messages"][0]["content"])
+        evaluation = self.records("audit/rss.jsonl")[-1]
+        self.assertTrue(evaluation["flash"]["windows"][-1]["budget_exhausted"])
+        self.assertEqual(len(self.deliveries), 1)
+        self.assertEqual(self.files("message_queue"), [])
+        self.run_cli("audit", "--health")
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len([1 for method, path, _ in self.requests
+                              if method == "POST" and path == "/v1/chat/completions"]), 5)
+        self.assertEqual(len(self.deliveries), 1)
 
     def test_legacy_migration_overlapping_categories_and_future_backfill_via_processes(self):
         self.run_cli("rss_poller.py")

@@ -73,6 +73,49 @@ class TestFlashIncremental(unittest.TestCase):
             )
         self.assertTrue(flag)
 
+    def test_large_rss_read_more_has_bounded_calls_and_preserves_full_pro_input(self):
+        from rss_poller import parse_feed
+        from tests.test_rss_subscriptions import xml
+        posting = parse_feed(xml("&lt;br/&gt;".join(
+            ["Ambiguous vacancy details; responsibilities still to follow."] * 3000 +
+            ["LAST REQUIREMENT: fluent Greek"])), "https://example.org/rss")[0]["content"]
+        calls = []
+        def model(model, prompt, key):
+            calls.append((model, prompt))
+            if model == triage.FLASH_MODEL:
+                return '{"decision":"read_more","reason":"need more context"}'
+            return '{"decision":"skip","reason":"criteria mismatch"}'
+        with patch.object(triage, "call_deepseek", side_effect=model), \
+                patch.object(triage, "direction_context", return_value=""), \
+                patch.object(triage, "CRITERIA_FILE") as criteria:
+            criteria.read_text.return_value = "Match the user's criteria."
+            result = triage.evaluate_message(posting, {}, "fake-key")
+        self.assertEqual([model for model, _ in calls], [triage.FLASH_MODEL] * 4 + [triage.PRO_MODEL])
+        self.assertIn(posting, calls[-1][1])
+        self.assertIn("budget reached", result["flash"]["reason"])
+        self.assertTrue(result["flash"]["windows"][-1]["budget_exhausted"])
+        self.assertEqual(result["pro"]["decision"], "skip")
+        self.assertLess(sum(len(prompt) for _, prompt in calls[:-1]), 10_000)
+
+    def test_long_lines_cannot_bypass_flash_character_budget(self):
+        for posting in ("A" * 12_001, "Title\nCompany\nIntro\n" + "B" * 12_001):
+            with self.subTest(prefix=posting[:10]):
+                with patch.object(triage, "call_deepseek", return_value='{"decision":"read_more","reason":"unclear"}') as model, \
+                        patch.object(triage, "direction_context", return_value=""):
+                    flag, reason, windows = triage.flash_incremental(posting, "Design", "Research", "fake-key")
+                self.assertTrue(flag)
+                self.assertIn("budget reached", reason)
+                self.assertEqual(model.call_count, 0 if posting.startswith("A") else 1)
+                for call in model.call_args_list:
+                    self.assertLessEqual(len(call.args[1].split("Posting so far:\n", 1)[1]), 12_000)
+
+    def test_character_budget_keeps_a_clear_decision_on_last_allowed_window(self):
+        with patch.object(triage, "call_deepseek", return_value='{"decision":"disqualified","reason":"not hiring"}') as model:
+            flag, _, windows = triage.flash_incremental("A" * 12_000, "Design", "Research", "fake-key")
+        self.assertFalse(flag)
+        self.assertEqual(model.call_count, 1)
+        self.assertNotIn("budget_exhausted", windows[-1])
+
     def test_empty_content(self):
         """Empty content immediately disqualified."""
         flag, reason, _windows = triage.flash_incremental(

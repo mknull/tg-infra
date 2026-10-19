@@ -135,7 +135,7 @@ class TestSetupScript(unittest.TestCase):
             self.assertTrue((self.systemd / f"{name}.timer").exists(),
                             f"missing {name}.timer")
 
-    def test_rss_preset_and_daily_timer(self):
+    def test_rss_preset_and_hourly_timer(self):
         feeds = json.loads((self.state / "feeds.json").read_text())["feeds"]
         self.assertEqual(feeds[0]["id"], "fossjobs")
         self.assertEqual(feeds[0]["url"], "https://www.fossjobs.net/rss/all/")
@@ -242,6 +242,52 @@ rss_poller.fetch_feed = lambda url, previous: (b'<rss version="2.0"><channel><ti
         self.assertIn("invalid JSON", result.stderr)
         self.assertIn("invalid JSON", (project / "state/setup.log").read_text())
         self.assertFalse((project / "source/interests.txt").exists())
+
+    def test_reinstall_migrates_old_generated_rss_units_and_restarts_timer(self):
+        project, env, result = self._configured_install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        units = Path(env["XDG_CONFIG_HOME"]) / "systemd/user"
+        service, timer = units / "rss-poll.service", units / "rss-poll.timer"
+        current_service, current_timer = service.read_text(), timer.read_text()
+        old_service = current_service.replace("rss_poller.py --due", "rss_poller.py")
+        old_timer = current_timer.replace("OnCalendar=*-*-* *:10:00", "OnCalendar=*-*-* 06:10:00")
+        service.write_text(old_service)
+        timer.write_text(old_timer)
+        other_units = {p: p.read_bytes() for p in units.iterdir() if p not in (service, timer)}
+        calls = (project / "model-calls").read_bytes()
+        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
+                               input="\n", capture_output=True, text=True, timeout=30)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(service.read_text(), current_service)
+        self.assertEqual(timer.read_text(), current_timer)
+        self.assertEqual(service.with_suffix(".service.pre-hourly").read_text(), old_service)
+        self.assertEqual(timer.with_suffix(".timer.pre-hourly").read_text(), old_timer)
+        self.assertTrue(all(p.read_bytes() == data for p, data in other_units.items()))
+        self.assertIn("Updated rss-poll.timer from daily to hourly", again.stdout)
+        self.assertIn("restart rss-poll.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
+        self.assertEqual((project / "model-calls").read_bytes(), calls)
+        # A second reinstall keeps both units and backups without another restart.
+        before = Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text()
+        last = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
+                              input="\n", capture_output=True, text=True, timeout=30)
+        self.assertEqual(last.returncode, 0, last.stdout + last.stderr)
+        self.assertNotIn("restart rss-poll.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text()[len(before):])
+        self.assertEqual(service.with_suffix(".service.pre-hourly").read_text(), old_service)
+
+    def test_reinstall_preserves_custom_rss_units_with_actionable_warning(self):
+        project, env, result = self._configured_install()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        units = Path(env["XDG_CONFIG_HOME"]) / "systemd/user"
+        service, timer = units / "rss-poll.service", units / "rss-poll.timer"
+        service.write_text(service.read_text().replace("rss_poller.py --due", "rss_poller.py") + "Nice=10\n")
+        timer.write_text(timer.read_text().replace("OnCalendar=*-*-* *:10:00", "OnCalendar=*-*-* 06:10:00") + "# custom schedule\n")
+        before = {p: p.read_bytes() for p in (service, timer)}
+        again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
+                               input="\n", capture_output=True, text=True, timeout=30)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertTrue(all(p.read_bytes() == data for p, data in before.items()))
+        self.assertIn("check that ExecStart runs rss_poller.py --due", again.stdout)
+        self.assertIn("check that OnCalendar polls at least hourly", again.stdout)
 
 
 if __name__ == "__main__":

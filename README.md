@@ -50,7 +50,7 @@ flowchart TB
 
 ### Two-stage triage
 
-Every message passes through Flash (`deepseek-v4-flash`) which reads 3 lines at a time and decides: `disqualified`, `read_more`, or `pass_to_pro`. Only messages Flash can't disqualify reach Pro (`deepseek-v4-pro`) for full body evaluation against the candidate's criteria. Most volume dies at Flash.
+Queued Telegram and RSS postings pass through Flash (`deepseek-v4-flash`), which reads 3 lines at a time and decides: `disqualified`, `read_more`, or `pass_to_pro`. Flash gets at most four calls and 12,000 posting characters per prompt. If either budget is reached, the complete posting goes to Pro (`deepseek-v4-pro`) for evaluation against the candidate's criteria; it is never silently truncated or rejected for length. Email uses its separate header/body cascade.
 
 Pro extracts structured tags (role title, skills, domain, seniority, remote status) alongside the send/skip decision — the model already has the full text in context, so this costs nothing extra.
 
@@ -143,6 +143,9 @@ Subscriptions choose their own cadence: catalogue feeds with short windows poll
 hourly; FSF and Tails daily. Running `rss_poller.py` manually checks every enabled
 subscription. Installing/updating services still uses `./setup.sh`; repository edits
 alone do not activate them. The collector makes no model calls or deliveries.
+Reinstalling migrates the old generated daily RSS units to hourly polling with
+`--due`, retaining `.pre-hourly` backups. Custom units are preserved with a warning
+to review their command and schedule.
 
 State remains under `state/rss/<publisher>/`: a shared job index, per-subscription
 HTTP checkpoints/raw snapshots/status, item dispositions and cached details.
@@ -153,8 +156,12 @@ requeue. Deduplication spans subscriptions within a publisher, not different sit
 
 Requests use conditional GET, timeouts, a 2 MiB limit, bounded retries and host
 throttling. FSF/NoDesk details are cached by feed revision, with at most 20 detail
-requests per publisher per poll. Failed or deferred details stay retryable even
-when the job leaves the feed window. Page-only changes are not detected until the
+requests per publisher per poll. Untried jobs precede retries, which rotate by their
+persisted last attempt so broken pages cannot monopolize the allowance. Deferred
+jobs retain their original subscription's filters after leaving the feed window.
+If that subscription is removed, its pending jobs remain recorded for audit and
+resume when it is restored or the job appears in another selected feed.
+Page-only changes are not detected until the
 feed entry changes. Snapshots/history are retained without automatic pruning.
 
 `./audit --health` checks per-subscription failures and polls overdue by twice their

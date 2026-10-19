@@ -153,6 +153,21 @@ class TestRssAudit(unittest.TestCase):
         self.records("rss.jsonl", [self.arrival(), evaluation])
         self.assertIn("before Flash passed or exhausted", self.cli("--health", code=1))
 
+    def test_explicit_flash_budget_handoff_requires_completed_pro_evaluation(self):
+        evaluation = self.evaluation(pro="skip")
+        window = {"decision": "read_more", "window_end": 12, "total_lines": 3003,
+                  "budget_exhausted": True}
+        evaluation["flash"]["windows"] = [window]
+        self.records("rss.jsonl", [self.arrival(), evaluation])
+        self.cli("--health")
+        pro = evaluation.pop("pro")
+        self.records("rss.jsonl", [self.arrival(), evaluation])
+        self.assertIn("invalid cascade", self.cli("--health", code=1))
+        evaluation["pro"] = pro
+        window["decision"] = "disqualified"
+        self.records("rss.jsonl", [self.arrival(), evaluation])
+        self.assertIn("before Flash passed or exhausted", self.cli("--health", code=1))
+
     def test_send_requires_its_own_job_match_acknowledgement_even_when_old(self):
         self.records("rss.jsonl", [self.arrival(hours=72), self.evaluation(hours=72)])
         for deliveries in ([], [self.delivery(mid="some-other-revision")],

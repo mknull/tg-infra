@@ -75,6 +75,7 @@ def _evaluation_problem(record: dict) -> str | None:
         last = windows[-1]
         if last["decision"] == "disqualified" or (
             last["decision"] == "read_more" and
+            last.get("budget_exhausted") is not True and
             (not last.get("total_lines") or last.get("window_end") != last["total_lines"])
         ):
             return "Pro called before Flash passed or exhausted the posting"

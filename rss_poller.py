@@ -297,6 +297,7 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
         if detail_requests >= MAX_DETAIL_FETCHES:
             raise OSError("detail-fetch allowance exhausted; retained for next poll")
         detail_requests += 1
+        index["detail_attempt_sequence"] = index.get("detail_attempt_sequence", 0) + 1
         return fetch_feed(url, previous)
 
     try:
@@ -365,7 +366,11 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
         for key, pending in list(index.get("deferred", {}).items()):
             if key in groups:
                 continue
-            record = next((r for r in records if r["due"] and not r["error"]), None)
+            # A different category's filters cannot decide the fate of this job.
+            # Removed subscriptions leave their pending work intact; restoring
+            # the subscription (or observing the job in another) resumes it.
+            record = next((r for r in records if r["due"] and
+                           r["sub"]["id"] == pending["subscription_id"]), None)
             if record is not None:
                 item = pending["item"]
                 observation = {"source_id": item["source_id"], "job_id": f"rss-{source}-{key}",
@@ -378,7 +383,13 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
                     continue
                 groups[key] = [(record, item, observation)]
 
-        for key, candidates in groups.items():
+        # Never-attempted jobs go first, then the least recently attempted.
+        # Persisted sequence numbers rotate retries even after a process restart
+        # or while the same failed pages remain at the front of a feed.
+        pending_items = index.get("deferred", {})
+        ordered_keys = sorted(groups, key=lambda key: pending_items.get(key, {}).get("last_attempt", 0))
+        for key in ordered_keys:
+            candidates = groups[key]
             previous = index["items"].get(key, {})
             representations = dict(previous.get("representations", {}))
             # Seed the old broad-feed representation without changing historical IDs.
@@ -409,6 +420,7 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
             accepted = dict(previous) if previous else {**item, "first_seen": now}
             disposition, reason = "unchanged", "known job representation"
             if should_queue:
+                requests_before = detail_requests
                 try:
                     parser = index.get("deferred", {}).get(key, {}).get("enrich", record["sub"].get("enrich"))
                     if parser:
@@ -416,10 +428,13 @@ def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> 
                         item = enrich_item(item, parser, directory / "details", detail_fetch, plain_text)
                 except (OSError, ValueError) as error:
                     counts["deferred"] += 1
+                    pending = index.get("deferred", {}).get(key, {})
                     index.setdefault("deferred", {})[key] = {"item": item,
                         "subscription_id": record["sub"]["id"], "reason": str(error),
                         "enrich": parser,
-                        "first_seen": index.get("deferred", {}).get(key, {}).get("first_seen", now)}
+                        "first_seen": pending.get("first_seen", now),
+                        "last_attempt": (index["detail_attempt_sequence"] if detail_requests > requests_before
+                                         else pending.get("last_attempt", 0))}
                     for r, _, observation in candidates:
                         observation.update(disposition="deferred", reason=str(error))
                         r["error"] = f"required detail fetch failed: {error}"

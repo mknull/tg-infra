@@ -18,6 +18,10 @@ MESSAGES_DIR = STATE_DIR / "messages"
 AUDIT_FILE = STATE_DIR / "audit" / "telegram.jsonl"
 RSS_AUDIT_FILE = STATE_DIR / "audit" / "rss.jsonl"
 CRITERIA_FILE = STATE_DIR / "it-jobs-criteria.md"
+# Bound cumulative Flash work regardless of a publisher's line formatting.
+# Pro still receives the complete posting when either limit is reached.
+MAX_FLASH_WINDOWS = 4
+MAX_FLASH_POSTING_CHARS = 12_000
 
 
 def _load_channel_config() -> dict[str, dict]:
@@ -47,7 +51,7 @@ FLASH_PROMPT = (
 
 def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
                       api_key: str) -> tuple[bool, str, list[dict]]:
-    """Read 3 lines at a time until Flash decides. Returns (flag, reason, windows)."""
+    """Read up to four 3-line windows, then escalate. Returns (flag, reason, windows)."""
     lines = [l for l in content.splitlines() if l.strip()]
     if not lines:
         return False, "empty message", []
@@ -58,6 +62,13 @@ def flash_incremental(content: str, desired_roles: str, acceptable_roles: str,
     while i < total:
         window_end = min(i + 3, total)
         seen = "\n".join(lines[:window_end])
+        if len(windows) >= MAX_FLASH_WINDOWS or len(seen) > MAX_FLASH_POSTING_CHARS:
+            reason = "Flash budget reached; escalate the complete posting to Pro"
+            # This is a controller decision, not a fabricated model response.
+            if windows:
+                windows[-1]["budget_exhausted"] = True
+            logging.info(reason)
+            return True, reason, windows
         prompt = FLASH_PROMPT.format(
             desired_roles=desired_roles,
             acceptable_roles=acceptable_roles,

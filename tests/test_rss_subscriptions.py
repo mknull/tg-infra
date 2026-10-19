@@ -3,9 +3,11 @@
 import json
 import tempfile
 import unittest
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+from xml.etree import ElementTree
 
 import rss_poller as rss
 from lib.rss_audit import check_rss_health
@@ -208,6 +210,95 @@ class TestSubscriptions(unittest.TestCase):
         self.assertEqual(len(self.queue()), 1)
         self.assertEqual(self.poll()["queued"], 1)
         self.assertEqual(len(self.queue()), 2)
+
+    def _deferred_design_job(self):
+        self.feed["enrich"] = "nodesk"
+        engineering, design = self.feed["subscriptions"]
+        engineering["include_categories"] = ["Engineering"]
+        design["include_categories"] = ["Design"]
+        job_url = "https://nodesk.co/remote-jobs/design-1/"
+        self.responses[engineering["url"]] = EMPTY
+        self.responses[design["url"]] = xml(link=job_url, category="Design")
+        self.responses[job_url] = OSError("temporary detail outage")
+        with self.assertRaises(ValueError):
+            self.poll()
+        self.assertEqual(len(self.index()["deferred"]), 1)
+        self.responses[design["url"]] = EMPTY
+        self.responses[job_url] = DETAIL
+        self.calls.clear()
+        return design, job_url
+
+    def test_retained_job_uses_original_subscription_filters(self):
+        design, job_url = self._deferred_design_job()
+        self.assertEqual(self.poll()["queued"], 1)
+        queued, = self.queue()
+        self.assertEqual(json.loads(queued.read_text())["meta"]["subscription_ids"], [design["id"]])
+        self.assertIn(job_url, [url for url, _ in self.calls])
+        self.assertEqual(self.index()["deferred"], {})
+        self.assertEqual(self.health()[1], [])
+        self.assertEqual(self.poll()["queued"], 0)
+
+    def test_retained_job_recovers_even_if_origin_feed_is_unavailable(self):
+        design, job_url = self._deferred_design_job()
+        self.responses[design["url"]] = OSError("feed unavailable")
+        with self.assertRaisesRegex(ValueError, "feed unavailable"):
+            self.poll()
+        self.assertEqual(len(self.queue()), 1)
+        self.assertIn(job_url, [url for url, _ in self.calls])
+        self.assertEqual(self.index()["deferred"], {})
+        self.assertTrue(any("feed unavailable" in p for p in self.health()[1]))
+
+    def test_removed_origin_retains_job_until_subscription_is_restored(self):
+        design, job_url = self._deferred_design_job()
+        self.feed["subscriptions"].remove(design)
+        self.assertEqual(self.poll()["queued"], 0)
+        self.assertEqual(len(self.index()["deferred"]), 1)
+        self.assertNotIn(job_url, [url for url, _ in self.calls])
+        self.assertTrue(any("DEFERRED" in p for p in self.health()[1]))
+        self.feed["subscriptions"].append(design)
+        self.assertEqual(self.poll()["queued"], 1)
+
+    def test_explicit_origin_filter_change_can_exclude_retained_job(self):
+        design, job_url = self._deferred_design_job()
+        design["exclude_title_prefixes"] = ["Example"]
+        self.assertEqual(self.poll()["queued"], 0)
+        self.assertEqual(self.index()["deferred"], {})
+        self.assertNotIn(job_url, [url for url, _ in self.calls])
+        evidence = json.loads((self.state / "rss/fixture/subscriptions/b/observations.json").read_text())
+        self.assertEqual(evidence["items"][0]["disposition"], "excluded")
+        self.assertEqual(self.health()[1], [])
+
+    def _assert_fair_detail_retries(self, rolls_off):
+        self.feed["subscriptions"] = self.feed["subscriptions"][:1]
+        self.feed["enrich"] = "nodesk"
+        feed_url = self.feed["subscriptions"][0]["url"]
+        document = ElementTree.fromstring(EMPTY)
+        urls = [f"https://nodesk.co/remote-jobs/job-{i}/" for i in range(21)]
+        for i, url in enumerate(urls):
+            document.find("channel").append(ElementTree.fromstring(xml(guid=str(i), link=url)).find("channel/item"))
+            self.responses[url] = OSError("deleted page") if i < 20 else DETAIL
+        self.responses[feed_url] = ElementTree.tostring(document)
+        with self.assertRaises(ValueError):
+            self.poll()
+        self.assertEqual(len(self.index()["deferred"]), 21)
+        self.assertEqual(self.queue(), [])
+        if rolls_off:
+            self.responses[feed_url] = EMPTY
+        for _ in range(4):
+            with self.assertRaises(ValueError):
+                self.poll()  # Reloads the persisted retry order every time.
+            self.assertEqual(len(self.queue()), 1)
+        attempts = Counter(url for url, _ in self.calls)
+        self.assertEqual(attempts[urls[-1]], 1)
+        self.assertTrue(all(attempts[url] >= 4 for url in urls[:-1]))
+        self.assertEqual(len(self.index()["deferred"]), 20)
+        self.assertEqual(len((self.state / "audit/rss.jsonl").read_text().splitlines()), 1)
+
+    def test_failed_detail_pages_do_not_starve_jobs_still_in_feed(self):
+        self._assert_fair_detail_retries(rolls_off=False)
+
+    def test_failed_detail_pages_do_not_starve_jobs_after_feed_rolloff(self):
+        self._assert_fair_detail_retries(rolls_off=True)
 
     def test_legacy_url_configuration_clears_successfully_retried_details(self):
         url = self.feed["subscriptions"][0]["url"]
