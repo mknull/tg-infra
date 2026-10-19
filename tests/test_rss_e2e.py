@@ -32,6 +32,11 @@ urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHa
 original = urllib.request.urlopen
 def local_only(request, *args, **kwargs):
     url = request.full_url if isinstance(request, urllib.request.Request) else request
+    if url.startswith("https://nodesk.co/remote-jobs/"):
+        request = urllib.request.Request(base + "/detail")
+        response = original(request, *args, **kwargs)
+        response.geturl = lambda: url
+        return response
     if url == "https://api.telegram.org/botfixture/sendMessage":
         request.full_url = base + "/botfixture/sendMessage"
         url = request.full_url
@@ -194,6 +199,60 @@ class TestRssCLI(unittest.TestCase):
         self.assertEqual(index.read_bytes(), previous)
         self.assertEqual(self.files("message_queue"), [])
         self.assertIn("RSS fixture", self.run_cli("audit", "--health", code=1))
+
+    def test_legacy_migration_overlapping_categories_and_future_backfill_via_processes(self):
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        first_ref = self.records("audit/delivery.jsonl")[0]["ref"]
+        self.feeds["/summary"] = self.feeds["/feed"].replace(b"Full description.", b"A different category summary.")
+        subscriptions = [{"id": "all", "url": self.base + "/feed"},
+                         {"id": "category", "url": self.base + "/summary"}]
+        self.configure([{"id": "fixture", "subscriptions": subscriptions}])
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 1)
+        self.assertEqual(self.records("audit/delivery.jsonl")[0]["ref"], first_ref)
+        self.assertEqual(len([r for r in self.requests if r[0] == "POST" and r[1] == "/v1/chat/completions"]), 2)
+        self.feeds["/summary"] = self.feeds["/summary"].replace(b"category summary.", b"category summary. Salary increased.")
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 2)
+
+        # A newly selected subscription's existing inventory is explicitly baselined.
+        self.feeds["/new"] = self.feeds["/feed"].replace(b"job:44", b"job:45")
+        subscriptions.append({"id": "new", "url": self.base + "/new", "backfill": {"mode": "future"}})
+        self.configure([{"id": "fixture", "subscriptions": subscriptions}])
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 2)
+        self.feeds["/new"] = self.feeds["/new"].replace(b"job:45", b"job:46")
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 3)
+        self.run_cli("audit", "--health")
+
+    def test_required_detail_outage_recovers_after_feed_window_moves(self):
+        from tests.test_rss_subscriptions import xml, EMPTY, DETAIL
+        self.feeds["/feed"] = xml(link="https://nodesk.co/remote-jobs/example/")
+        self.configure([{"id": "fixture", "subscriptions": [{"id": "design", "url": self.base + "/feed",
+                        "allow_empty": True, "enrich": "nodesk"}]}])
+        self.run_cli("rss_poller.py", code=1)
+        self.assertEqual(self.files("message_queue"), [])
+        self.assertIn("DEFERRED", self.run_cli("audit", "--health", code=1))
+        self.feeds["/feed"] = EMPTY
+        self.feeds["/detail"] = DETAIL
+        self.run_cli("rss_poller.py")
+        queued, = self.files("message_queue")
+        self.assertIn("Cyprus", queued.read_text())
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 1)
+        prompts = [body["messages"][0]["content"] for method, path, body in self.requests
+                   if method == "POST" and path == "/v1/chat/completions"]
+        self.assertIn("Cyprus", prompts[-1])
+        self.run_cli("audit", "--health")
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(len(self.deliveries), 1)
 
     def test_failed_source_does_not_block_other_feed_and_model_outage_defers(self):
         self.feeds["/rdf"] = (FIXTURES / "rdf.xml").read_bytes()

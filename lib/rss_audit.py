@@ -9,7 +9,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .sources import load_feeds
+from .sources import feed_subscriptions, load_feeds
 
 POLL_MAX_AGE = timedelta(hours=48)
 PROCESSING_GRACE = timedelta(hours=1)
@@ -94,6 +94,7 @@ def check_rss_health(state: Path, *, since: datetime,
     """
     now = now or datetime.now(timezone.utc)
     info, problems = [], []
+    observed_messages = {}
     try:
         feeds = load_feeds(state / "feeds.json")
     except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
@@ -103,35 +104,75 @@ def check_rss_health(state: Path, *, since: datetime,
     for feed_id, feed in feeds.items():
         if not feed.get("enabled", True):
             continue
-        directory = state / "rss" / feed_id
-        try:
-            status = _object(directory / "status.json")
-            age = now - _time(status["at"])
-            if status["ok"] is not True:
-                problems.append(f"RSS {feed_id}: {status.get('error', 'poll failed')}")
-            elif age > POLL_MAX_AGE:
-                problems.append(f"RSS {feed_id}: last successful poll over 48 hours ago")
-            else:
-                counts = ", ".join(f"{key}={status[key]}" for key in
-                                   ("new", "changed", "unchanged", "filtered", "queued") if key in status)
-                detail = "not modified (304)" if status.get("not_modified") else counts
-                info.append(f"RSS {feed_id}: fetched {age.total_seconds() / 3600:.1f}h ago"
-                            + (f" ({detail})" if detail else ""))
-                if not (directory / "index.json").exists():
-                    problems.append(f"RSS {feed_id}: successful poll has no ingestion index")
-        except FileNotFoundError:
-            problems.append(f"RSS {feed_id}: never polled")
-        except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
-            problems.append(f"RSS {feed_id}: invalid poll status: {exc}")
+        publisher_dir = state / "rss" / feed_id
+        for subscription in feed_subscriptions(feed):
+            label = f"{feed_id}/{subscription['id']}" if "subscriptions" in feed else feed_id
+            directory = publisher_dir / "subscriptions" / subscription["id"] if "subscriptions" in feed else publisher_dir
+            try:
+                status = _object(directory / "status.json")
+                age = now - _time(status["at"])
+                max_hours = subscription["poll_interval_hours"] * 2
+                if status["ok"] is not True:
+                    problems.append(f"RSS {label}: {status.get('error', 'poll failed')}")
+                elif age > timedelta(hours=max_hours):
+                    problems.append(f"RSS {label}: last successful poll over {max_hours} hours ago")
+                else:
+                    counts = ", ".join(f"{key}={status[key]}" for key in
+                                       ("new", "changed", "unchanged", "filtered", "queued") if key in status)
+                    detail = "not modified (304)" if status.get("not_modified") else counts
+                    info.append(f"RSS {label}: fetched {age.total_seconds() / 3600:.1f}h ago"
+                                + (f" ({detail})" if detail else ""))
+                    if not (publisher_dir / "index.json").exists() or not (directory / "index.json").exists():
+                        problems.append(f"RSS {label}: successful poll has no ingestion index")
+                    if "subscriptions" in feed or status.get("observations_file"):
+                        evidence = _object(directory / "observations.json")
+                        if evidence.get("config_revision") != status.get("config_revision") or evidence.get("at") != status["at"]:
+                            raise ValueError("observation evidence does not match the poll")
+                        observed = evidence["items"]
+                        count = evidence["parsed_count"]
+                        retained = evidence.get("retained_count", 0)
+                        if (not isinstance(observed, list) or type(count) is not int or count < 0 or
+                            type(retained) is not int or retained < 0 or len(observed) != count + retained or
+                            status.get("parsed_count") != count or status.get("retained_count", 0) != retained):
+                            raise ValueError("parsed count does not match accounted items")
+                        for observation in observed:
+                            if (not isinstance(observation, dict) or
+                                observation.get("disposition") not in ("queued", "unchanged", "excluded", "duplicate", "deferred") or
+                                not isinstance(observation.get("reason"), str) or not observation["reason"] or
+                                not isinstance(observation.get("source_id"), str) or not observation["source_id"]):
+                                raise ValueError("invalid item disposition")
+                            if observation["disposition"] == "deferred":
+                                problems.append(f"RSS DEFERRED [{label}]: {observation['reason']}")
+                            mid = observation.get("msg_id")
+                            if observation["disposition"] == "queued" and (not isinstance(mid, str) or not mid):
+                                raise ValueError("queued observation has no message ID")
+                            if mid:
+                                if not isinstance(mid, str):
+                                    raise ValueError("invalid observed message ID")
+                                _time(observation["arrived_at"])
+                                observed_messages[mid] = {"feed_id": feed_id, "arrived_at": observation["arrived_at"]}
+            except FileNotFoundError:
+                problems.append(f"RSS {label}: never polled or missing poll evidence")
+            except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+                problems.append(f"RSS {label}: invalid poll status: {exc}")
 
     # The index supplies evidence even if an arrival log or queue file was lost.
-    indexed = {}
+    indexed = dict(observed_messages)
     for path in sorted((state / "rss").glob("*/index.json")):
         try:
-            items = _object(path)["items"]
+            checkpoint = _object(path)
+            items = checkpoint["items"]
+            for pending in checkpoint.get("deferred", {}).values():
+                feed_id = path.parent.name
+                if feed_id in feeds and not feeds[feed_id].get("enabled", True):
+                    info.append(f"RSS PAUSED [{feed_id}]: retained detail fetch")
+                else:
+                    problems.append(f"RSS DEFERRED [{feed_id}]: {pending['item']['source_id']}: {pending['reason']}")
             if not isinstance(items, dict):
                 raise ValueError("items must be an object")
             for item in items.values():
+                if not item.get("msg_id") and item.get("exclusion") in ("future-only baseline", "older than initial backfill window"):
+                    continue
                 mid = item["msg_id"]
                 if not isinstance(mid, str) or not mid:
                     raise ValueError("missing message ID")

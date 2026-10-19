@@ -13,7 +13,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from html.entities import name2codepoint
 from pathlib import Path
@@ -22,10 +22,11 @@ from urllib.parse import urljoin, urlsplit
 import feedparser
 
 from lib import STATE_DIR, setup_logging, write_audit
-from lib.sources import load_feeds
+from lib.sources import feed_subscriptions, load_feeds
 
 MAX_FEED_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 30
+MAX_DETAIL_FETCHES = 20
 _HOST_REQUESTS = {}
 
 
@@ -226,69 +227,291 @@ def fetch_feed(url: str, previous: dict) -> tuple[bytes | None, dict]:
     raise RuntimeError("feed fetch exhausted retries")
 
 
-def poll_feed(feed: dict, state_dir: Path) -> dict:
-    """Queue before checkpointing. Stable revision IDs also recover interrupted runs."""
+def _read_json(path: Path, default: dict) -> dict:
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+def _parse_options(subscription: dict) -> dict:
+    return {key: subscription.get(key, False) for key in
+            ("allow_empty", "repair_html_entities", "merge_variants")}
+
+
+def _subscription_dir(directory: Path, feed: dict, subscription: dict) -> Path:
+    return directory / "subscriptions" / subscription["id"] if "subscriptions" in feed else directory
+
+
+def _backfill_reason(item: dict, subscription: dict, initial: bool, now: str) -> str | None:
+    if not initial:
+        return None
+    policy = subscription.get("backfill", {"mode": "all"})
+    if policy["mode"] == "future":
+        return "future-only baseline"
+    if policy["mode"] == "recent" and item.get("posted_at"):
+        cutoff = datetime.fromisoformat(now.replace("Z", "+00:00")) - timedelta(days=policy.get("days", 30))
+        if datetime.fromisoformat(item["posted_at"].replace("Z", "+00:00")) < cutoff:
+            return "older than initial backfill window"
+    return None  # Unknown dates are kept in recent mode.
+
+
+def _queue_item(item: dict, previous: dict, feed: dict, state: Path, now: str,
+                subscription_ids: list[str], revision: str) -> tuple[str, bool]:
+    key = _digest(item["source_id"])
+    job_id = f"rss-{feed['id']}-{key}"
+    mid = f"{job_id}-{item['content_hash']}"
+    queue_path = state / "message_queue" / f"{mid}.json"
+    archive_path = state / "messages" / f"{mid}.json"
+    written = not queue_path.exists() and not archive_path.exists()
+    if written:
+        meta = {"source": "rss", "source_name": feed["name"], "feed_id": feed["id"],
+                "source_id": item["source_id"], "job_id": job_id, "message_id": mid,
+                "url": item["url"], "ts": now, "posted_at": item["posted_at"],
+                "content_hash": item["content_hash"], "change": "changed" if previous else "new",
+                "categories": item["categories"], "subscription_ids": subscription_ids,
+                "config_revision": revision}
+        atomic_write(queue_path, json.dumps({"content": item["content"], "meta": meta}).encode())
+        write_audit({"msg_id": mid, "source": "rss", "feed_id": feed["id"],
+                     "sender": feed["name"], "preview": item["title"], "content": item["content"],
+                     "url": item["url"], "arrived_at": now, "posted_at": item["posted_at"],
+                     "stage": "arrival", "job_id": job_id, "subscription_ids": subscription_ids,
+                     "config_revision": revision}, state / "audit" / "rss.jsonl")
+    return mid, written
+
+
+def poll_feed(feed: dict, state_dir: Path, *, respect_cadence: bool = False) -> dict:
+    """Collect subscriptions, then reconcile once per publisher before queueing.
+
+    An unfamiliar representation is baselined without resending an existing job.
+    A later change to a known representation can create a new revision. Keeping
+    hashes of accepted revisions also prevents replay when feeds are switched back.
+    """
     source = feed["id"]
     directory = state_dir / "rss" / source
     directory.mkdir(parents=True, exist_ok=True)
-    status_path = directory / "status.json"
     now = _now()
+    revision = _digest(json.dumps(feed, sort_keys=True))[:16]
+    index_path = directory / "index.json"
+    counts = {"new": 0, "changed": 0, "unchanged": 0, "queued": 0, "filtered": 0, "deferred": 0}
+    detail_requests = 0
+    def detail_fetch(url, previous):
+        nonlocal detail_requests
+        if detail_requests >= MAX_DETAIL_FETCHES:
+            raise OSError("detail-fetch allowance exhausted; retained for next poll")
+        detail_requests += 1
+        return fetch_feed(url, previous)
+
     try:
-        index_path = directory / "index.json"
-        index = json.loads(index_path.read_text()) if index_path.exists() else {"items": {}}
-        selection = {key: feed.get(key) for key in
-                     ("include_title_prefixes", "include_categories", "allow_empty", "repair_html_entities")}
-        # Reconsider entries after a config change, even if the server's XML is unchanged.
-        raw, response = fetch_feed(feed["url"], index if index.get("selection") == selection else {})
-        counts = {"new": 0, "changed": 0, "unchanged": 0, "queued": 0, "filtered": 0}
-        if raw is not None:
-            raw_path = directory / "raw" / f"{_digest(raw)}.xml"
-            if not raw_path.exists():
-                atomic_write(raw_path, raw)
-            items = parse_feed(raw, response.get("response_url", feed["url"]),
-                               allow_empty=feed.get("allow_empty", False),
-                               repair_html_entities=feed.get("repair_html_entities", False))
-            for item in items:
-                if not _selected(item, feed):
-                    counts["filtered"] += 1
+        index = _read_json(index_path, {"items": {}})
+        records = []
+        for position, sub in enumerate(feed_subscriptions(feed)):
+            subdir = _subscription_dir(directory, feed, sub)
+            checkpoint = _read_json(subdir / "index.json", {})
+            if not checkpoint and index.get("url") == sub["url"] and index.get("retrieved_at"):
+                checkpoint = {k: v for k, v in index.items() if k not in ("items", "deferred")}
+            selection = {k: v for k, v in sub.items() if k not in ("id", "url")}
+            same = checkpoint.get("selection") == selection and checkpoint.get("url") == sub["url"]
+            last_status = _read_json(subdir / "status.json", {})
+            due = True
+            if respect_cadence and same and last_status.get("ok") is True:
+                age = datetime.fromisoformat(now.replace("Z", "+00:00")) - datetime.fromisoformat(last_status["at"].replace("Z", "+00:00"))
+                due = age >= timedelta(hours=sub["poll_interval_hours"])
+            record = {"sub": sub, "dir": subdir, "checkpoint": checkpoint,
+                      "items": checkpoint.get("entries", []),
+                      "initial": not checkpoint.get("retrieved_at") or checkpoint.get("url") != sub["url"],
+                      "policy_changed": checkpoint.get("selection", {}).get("backfill") != sub.get("backfill"),
+                      "migrated": bool(checkpoint) and not (subdir / "index.json").exists(),
+                      "due": due, "fresh": False, "fetched_bytes": 0,
+                      "observations": [], "retained": 0, "error": None}
+            records.append(record)
+            if not due:
+                continue
+            if position:
+                time.sleep(1)
+            try:
+                raw, response = fetch_feed(sub["url"], checkpoint if same else {})
+                if raw is not None:
+                    record["fetched_bytes"] = len(raw)
+                    raw_path = subdir / "raw" / f"{_digest(raw)}.xml"
+                    if not raw_path.exists():
+                        atomic_write(raw_path, raw)
+                    items = parse_feed(raw, response.get("response_url", sub["url"]), **_parse_options(sub))
+                    record.update(items=items, fresh=True)
+                    record["checkpoint"] = {**checkpoint, **response, "url": sub["url"],
+                        "selection": selection, "raw_file": str(raw_path.relative_to(state_dir)),
+                        "retrieved_at": now, "entries": items}
+                elif not checkpoint.get("retrieved_at"):
+                    raise ValueError("304 received without a previously ingested feed")
+            except Exception as error:
+                record["error"] = str(error)
+                record["items"] = []
+
+        if not any(r["due"] for r in records):
+            return {"ok": True, "skipped": True, **counts}
+
+        groups = {}
+        for record in records:
+            if record["error"]:
+                continue
+            for item in record["items"]:
+                observation = {"source_id": item["source_id"], "job_id": f"rss-{source}-{_digest(item['source_id'])}"}
+                record["observations"].append(observation)
+                if not _selected(item, record["sub"]):
+                    observation.update(disposition="excluded", reason="configured local exclusion")
+                    if record["due"]:
+                        counts["filtered"] += 1
                     continue
-                key = _digest(item["source_id"])
-                previous = index["items"].get(key, {})
-                changed = previous.get("content_hash") != item["content_hash"]
-                counts["new" if not previous else "changed" if changed else "unchanged"] += 1
-                job_id = f"rss-{source}-{key}"
-                msg_id = f"{job_id}-{item['content_hash']}"
-                if changed:
-                    queue_path = state_dir / "message_queue" / f"{msg_id}.json"
-                    archive_path = state_dir / "messages" / f"{msg_id}.json"
-                    if not queue_path.exists() and not archive_path.exists():
-                        meta = {"source": "rss", "source_name": feed["name"], "feed_id": source,
-                                "source_id": item["source_id"], "job_id": job_id,
-                                "message_id": msg_id, "url": item["url"],
-                                "ts": now, "posted_at": item["posted_at"],
-                                "content_hash": item["content_hash"], "change": "changed" if previous else "new"}
-                        meta["categories"] = item["categories"]
-                        atomic_write(queue_path, json.dumps({"content": item["content"], "meta": meta}).encode())
-                        write_audit({"msg_id": msg_id, "source": "rss", "feed_id": source,
-                                     "sender": feed["name"], "preview": item["title"],
-                                     "content": item["content"], "url": item["url"],
-                                     "arrived_at": now, "posted_at": item["posted_at"],
-                                     "stage": "arrival", "job_id": job_id},
-                                    state_dir / "audit" / "rss.jsonl")
-                        counts["queued"] += 1
-                index["items"][key] = {**item, "job_id": job_id, "msg_id": msg_id,
-                                       "first_seen": previous.get("first_seen", now), "last_seen": now}
-            index.update(response)
-            index.update(url=feed["url"], raw_file=str(raw_path.relative_to(state_dir)),
-                         retrieved_at=now, selection=selection)
-            # Missing entries are retained: a feed is a window, not a complete inventory.
+                groups.setdefault(_digest(item["source_id"]), []).append((record, item, observation))
+
+        # Retry an already observed job even if it fell out of a short feed window.
+        for key, pending in list(index.get("deferred", {}).items()):
+            if key in groups:
+                continue
+            record = next((r for r in records if r["due"] and not r["error"]), None)
+            if record is not None:
+                item = pending["item"]
+                observation = {"source_id": item["source_id"], "job_id": f"rss-{source}-{key}",
+                               "retained_from": pending["subscription_id"]}
+                record["observations"].append(observation)
+                record["retained"] += 1
+                if not _selected(item, record["sub"]):
+                    observation.update(disposition="excluded", reason="current local exclusion")
+                    index["deferred"].pop(key)
+                    continue
+                groups[key] = [(record, item, observation)]
+
+        for key, candidates in groups.items():
+            previous = index["items"].get(key, {})
+            representations = dict(previous.get("representations", {}))
+            # Seed the old broad-feed representation without changing historical IDs.
+            if not representations and previous and index.get("url"):
+                representations[index["url"]] = previous["content_hash"]
+            changed = [(r, i, o) for r, i, o in candidates
+                       if r["sub"]["url"] in representations and
+                       representations[r["sub"]["url"]] != i["content_hash"]]
+            chosen = sorted(changed or candidates,
+                            key=lambda c: (-len(c[1]["content"]), c[1]["content_hash"], c[0]["sub"]["id"]))[0]
+            record, item, _ = chosen
+            incoming = {r["sub"]["url"]: i["content_hash"] for r, i, _ in candidates}
+            subscriptions = sorted({r["sub"]["id"] for r, _, _ in candidates})
+            should_queue = (not previous or bool(changed) or key in index.get("deferred", {}))
+            exclusion = None
+            if not previous and key not in index.get("deferred", {}):
+                reasons = [_backfill_reason(i, r["sub"], r["initial"], now) for r, i, _ in candidates]
+                if all(reasons):
+                    exclusion = reasons[0]
+                    should_queue = False
+            elif previous and not previous.get("msg_id") and not changed and key not in index.get("deferred", {}):
+                if any((r["initial"] or r["policy_changed"]) and
+                       _backfill_reason(i, r["sub"], True, now) is None for r, i, _ in candidates):
+                    should_queue = True
+                else:
+                    exclusion = previous.get("exclusion", "initial baseline")
+
+            accepted = dict(previous) if previous else {**item, "first_seen": now}
+            disposition, reason = "unchanged", "known job representation"
+            if should_queue:
+                try:
+                    parser = index.get("deferred", {}).get(key, {}).get("enrich", record["sub"].get("enrich"))
+                    if parser:
+                        from lib.rss_details import enrich_item
+                        item = enrich_item(item, parser, directory / "details", detail_fetch, plain_text)
+                except (OSError, ValueError) as error:
+                    counts["deferred"] += 1
+                    index.setdefault("deferred", {})[key] = {"item": item,
+                        "subscription_id": record["sub"]["id"], "reason": str(error),
+                        "enrich": parser,
+                        "first_seen": index.get("deferred", {}).get(key, {}).get("first_seen", now)}
+                    for r, _, observation in candidates:
+                        observation.update(disposition="deferred", reason=str(error))
+                        r["error"] = f"required detail fetch failed: {error}"
+                    continue
+                index.get("deferred", {}).pop(key, None)
+                seen_hashes = set(previous.get("revision_hashes", []))
+                if previous.get("msg_id"):
+                    seen_hashes.add(previous["content_hash"])
+                if item["content_hash"] not in seen_hashes:
+                    mid, written = _queue_item(item, previous, feed, state_dir, now, subscriptions, revision)
+                    counts["queued"] += int(written)
+                    counts["changed" if previous else "new"] += 1
+                    accepted = {**item, "job_id": f"rss-{source}-{key}", "msg_id": mid,
+                                "first_seen": previous.get("first_seen", now),
+                                "revision_hashes": sorted(seen_hashes | {item["content_hash"]})}
+                    disposition, reason = ("queued" if written else "duplicate"), ("changed representation" if previous else "new job")
+                else:
+                    disposition, reason = "duplicate", "revision already observed"
+            else:
+                counts["unchanged"] += int(bool(previous))
+            if exclusion:
+                accepted["exclusion"] = exclusion
+                disposition, reason = "excluded", exclusion
+            accepted.update(representations={**representations, **incoming}, subscription_ids=subscriptions)
+            if any(r["fresh"] for r, _, _ in candidates):
+                accepted["last_seen"] = now
+            # A 304-only poll leaves an already complete checkpoint untouched.
+            if accepted != previous:
+                index["items"][key] = accepted
+            for r, _, observation in candidates:
+                observation.update(disposition=disposition if r is record else "duplicate",
+                                   reason=reason if r is record else "overlapping subscription")
+                if accepted.get("msg_id"):
+                    observation["msg_id"] = accepted["msg_id"]
+                    observation["arrived_at"] = accepted["first_seen"]
+
+        # Queue files precede checkpoints. Stable IDs recover a failed publication.
+        for record in records:
+            if not record["due"]:
+                continue
+            subdir = record["dir"]
+            if record["fresh"]:
+                if subdir == directory:
+                    index.update({k: v for k, v in record["checkpoint"].items() if k in
+                                  ("url", "etag", "last_modified", "response_url", "selection",
+                                   "raw_file", "retrieved_at", "entries")})
+        before = _read_json(index_path, None)
+        if index != before:
             _write_json(index_path, index)
-        status = {"ok": True, "at": now, "not_modified": raw is None, **counts}
-        _write_json(status_path, status)
+        for record in records:
+            if record["due"] and (record["fresh"] or record["migrated"]) and record["dir"] != directory:
+                _write_json(record["dir"] / "index.json", record["checkpoint"])
+        failed = []
+        for record in records:
+            if not record["due"]:
+                continue
+            subdir = record["dir"]
+            evidence = {"at": now, "feed_id": source, "subscription_id": record["sub"]["id"],
+                        "config_revision": revision, "parsed_count": len(record["items"]),
+                        "fetched_bytes": record["fetched_bytes"],
+                        "retained_count": record["retained"],
+                        "items": record["observations"]}
+            _write_json(subdir / "observations.json", evidence)
+            dispositions = [item["disposition"] for item in record["observations"]]
+            sub_counts = {key: dispositions.count(key) for key in
+                          ("queued", "unchanged", "duplicate", "deferred")}
+            sub_counts["filtered"] = dispositions.count("excluded")
+            for key, reason in (("new", "new job"), ("changed", "changed representation")):
+                sub_counts[key] = sum(item["disposition"] == "queued" and item["reason"] == reason
+                                      for item in record["observations"])
+            status = {"ok": not bool(record["error"]), "at": now, "config_revision": revision,
+                      "parsed_count": len(record["items"]), "retained_count": record["retained"],
+                      "fetched_bytes": record["fetched_bytes"],
+                      "not_modified": not record["fresh"],
+                      "observations_file": str((subdir / "observations.json").relative_to(state_dir)),
+                      **sub_counts}
+            if record["error"]:
+                status["error"] = record["error"]
+                failed.append(f"{record['sub']['id']}: {record['error']}")
+            _write_json(subdir / "status.json", status)
+        status = {"ok": not failed, "at": now, "not_modified": not any(r["fresh"] for r in records), **counts}
+        if "subscriptions" in feed:
+            status["subscriptions"] = [r["sub"]["id"] for r in records]
+            if failed:
+                status["error"] = "; ".join(failed)
+            _write_json(directory / "status.json", status)
+        if failed:
+            raise ValueError("; ".join(failed))
         logging.info("[rss/%s] %s", source, counts)
         return status
     except Exception as error:
-        _write_json(status_path, {"ok": False, "at": now, "error": str(error)})
+        _write_json(directory / "status.json", {"ok": False, "at": now, "error": str(error)})
         raise
 
 
@@ -312,7 +535,7 @@ def main() -> None:
             if position:
                 time.sleep(1)
             try:
-                poll_feed(feed, STATE_DIR)
+                poll_feed(feed, STATE_DIR, respect_cadence="--due" in sys.argv)
             except Exception:
                 logging.exception("[rss/%s] source failed", feed["id"])
                 failed = True
