@@ -39,7 +39,8 @@ def read_file(path: Path | str) -> str:
 # web_search — SearXNG (self-hosted)
 # ---------------------------------------------------------------------------
 
-SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://localhost:8080/search")
+from lib.config import load_env
+SEARXNG_URL = os.environ.get("SEARXNG_URL") or load_env().get("SEARXNG_URL") or "http://localhost:8080/search"
 
 
 def web_search(query: str, max_results: int = 5) -> str:

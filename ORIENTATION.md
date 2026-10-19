@@ -3,16 +3,19 @@
 Standalone Python job-market intelligence, scheduled by user-level systemd timers.
 DeepSeek handles model calls; Claude Code is development tooling, not a runtime dependency.
 See [README.md](README.md) for architecture and [CLAUDE.md](CLAUDE.md) for development conventions.
+Installation: [guided setup](docs/installation.md) · [verification coverage](docs/setup-verification.md).
 RSS: [verified behavior and limits](docs/rss-feed-verification.md) · [scope and plan](docs/rss-feed-plan.md).
 
 - **Entry points:** `it_jobs_poller.py` → disk queue → `it_jobs_triage.py` → `lib/delivery.py`.
   `rss_poller.py` adds RSS/Atom feeds to the same queue; see `feeds.json.example`.
   `email_triage.py` handles Outlook. `bot_commands.py` → `agent.py` handles `/briefme`.
   `weekly_trend.py`, `weekly_recovery.py`, and `feedback_poller.py` handle reporting and feedback.
-  `setup.sh` generates the service/timer units.
+  `setup.sh` bootstraps `setup_cli.py`; `lib/setup_services.py` activates selected timers.
 - **Local inputs:** ignored `state/` holds config, credentials, criteria, and runtime records;
   `source/` holds generated profiles; `skills/` holds briefing instructions loaded by the agent.
   A fresh checkout lacks these personalized inputs. Root `*.example` files provide templates.
+  `state/installation.json` selects features; absent means legacy behavior.
+  Setup uses `TG_INFRA_DATA_DIR` to isolate drafts; normal data defaults to the checkout.
 - **Read-only checks:** `git status --short`, `./audit --health`, `./audit --topology`.
   Audit success alone does not establish live health: inspect timestamps and missing-data messages.
 - **Tests:** use the command in `CLAUDE.md` only in a disposable checkout/copy.

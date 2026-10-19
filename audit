@@ -15,9 +15,11 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from lib.sources import JOB_AUDIT_FILES
 from lib.rss_audit import check_rss_health
+from lib.config import STATE_DIR
+from lib.features import enabled
 
 PROJECT = os.path.dirname(os.path.abspath(__file__))
-STATE = os.path.join(PROJECT, "state")
+STATE = str(STATE_DIR)
 AUDIT_DIR = os.path.join(STATE, "audit")
 
 SOURCES = {**JOB_AUDIT_FILES, "briefme": "agent.jsonl"}
@@ -759,7 +761,9 @@ def main():
 
         # --- poller heartbeat ---
         heartbeat = os.path.join(STATE, "poller-heartbeat")
-        if os.path.exists(heartbeat):
+        if not enabled("telegram", Path(STATE)):
+            print(f"{DIM}poller: paused by configuration{RESET}")
+        elif os.path.exists(heartbeat):
             try:
                 hb_time = datetime.fromisoformat(
                     open(heartbeat).read().strip().replace("Z", "+00:00"))
@@ -950,7 +954,9 @@ def main():
 
         # --- canary health (synthetic delivery probe — real outcome) ---
         canary_status = os.path.join(STATE, "canary-status.json")
-        if os.path.exists(canary_status):
+        if not enabled("canary", Path(STATE)):
+            print(f"{DIM}canary: disabled{RESET}")
+        elif os.path.exists(canary_status):
             try:
                 c = json.loads(open(canary_status).read())
                 if c.get("ok"):
@@ -1000,6 +1006,8 @@ def main():
                     print(f"{RED}WEEKLY MISSED{RESET}: week {wk} never confirmed sent "
                           f"({attempts} attempts, last: {reason})")
                     alarm = True
+                elif not enabled("weekly", Path(STATE)):
+                    print(f"{DIM}weekly: week {wk} paused by configuration{RESET}")
                 elif age <= WEEKLY_RECOVERY_WINDOW_DAYS:
                     print(f"{YELLOW}weekly: week {wk} pending{RESET} "
                           f"({attempts} attempts, last: {reason}) — in recovery window")

@@ -14,7 +14,8 @@ from lib import (load_env, send_telegram_document, STATE_DIR,
 from agent import run_agent
 from lib.sources import JOB_AUDIT_FILES
 
-PROJECT_DIR = Path(__file__).resolve().parent
+from lib.config import DATA_DIR as PROJECT_DIR
+from lib.features import enabled
 MESSAGES_DIR = STATE_DIR / "messages"
 REF_MAP_FILE = STATE_DIR / "ref-map.jsonl"
 AUDIT_DIR = STATE_DIR / "audit"
@@ -285,6 +286,9 @@ def main() -> None:
         reply_to_msg_id = str(msg_tg_id) if reply_to else None
 
         if command == "/briefme":
+            if not enabled("briefings", STATE_DIR):
+                send_message(token, chat_id, "Briefings are disabled. Enable researched briefings in setup.")
+                continue
             logging.info("[%s] /briefme quoted=%s", chat_id, bool(quoted_text))
             try:
                 handle_briefme(token, chat_id, reply_to_msg_id, quoted_msg_id,

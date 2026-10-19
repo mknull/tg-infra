@@ -100,6 +100,11 @@ async def poll_channel(client: TelegramClient, channel: dict) -> None:
 
 async def poll() -> None:
     setup_logging()
+    from lib.config import STATE_DIR
+    from lib.features import enabled
+    if not enabled("telegram", STATE_DIR):
+        logging.info("telegram disabled by configuration")
+        return
     env = load_env()
     api_id_raw = env.get("TELEGRAM_API_ID") or os.environ.get("TELEGRAM_API_ID", "")
     api_hash = env.get("TELEGRAM_API_HASH") or os.environ.get("TELEGRAM_API_HASH", "")
@@ -119,7 +124,8 @@ async def poll() -> None:
     await client.start()
 
     for channel in load_channels():
-        await poll_channel(client, channel)
+        if channel.get("enabled", True):
+            await poll_channel(client, channel)
 
     await client.disconnect()
 

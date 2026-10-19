@@ -49,4 +49,6 @@ One branch per PR. After a PR merges, close out the branch — delete it locally
 
 ## State
 
-All runtime state lives in `state/` (project-local). This replaces the deprecated `~/.it-jobs/` directory.
+Runtime state lives in `state/` under `TG_INFRA_DATA_DIR` (defaults to the checkout).
+This replaces the deprecated `~/.it-jobs/` directory. Setup proposals are private
+copies under `state/setup/`; do not treat saved proposals as active installations.

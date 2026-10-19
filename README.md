@@ -1,6 +1,7 @@
 # telegram_MCP
 
 Start here: [repository orientation and safe verification](ORIENTATION.md).
+Install: [guided installation, documents and advanced controls](docs/installation.md).
 
 [![CI](https://github.com/mknull/tg-infra/actions/workflows/ci.yml/badge.svg)](https://github.com/mknull/tg-infra/actions/workflows/ci.yml)
 
@@ -60,8 +61,13 @@ Channel descriptions live in `state/channels.json` — each entry specifies what
 
 ### Matching setup
 
-Run `./setup.sh` to configure matching, or
+Run `./setup.sh` for guided installation, or
 `jobsmcp/bin/python3 generate_profile.py --setup` to review matching settings alone.
+The installer defaults to RSS input and Telegram bot delivery. It asks which
+inputs and optional reports to enable, requests their credentials, and accepts a
+folder of CVs/letters/notes or a written profile. Review **Start / Customize /
+Save for Later / Quit** before activation. Save stores a private proposal; it
+does not change the running installation. [Installation guide](docs/installation.md).
 Setup uses your documents and any additional preferences to generate Flash's
 `desired_roles` / `acceptable_roles` for enabled Telegram channels and RSS feeds,
 plus Pro's criteria. It previews the role preferences and criteria changes before
@@ -75,10 +81,11 @@ values. **Regenerate** can reuse the current profile or read updated documents,
 and previews replacements. Existing direction updates are retained.
 
 Malformed Flash JSON or invalid source IDs/fields get one correction attempt.
-Persistent failures are shown in the terminal and `state/setup.log`, with
+Persistent failures are shown in the terminal and the proposal's `state/setup.log`, with
 **Retry / Later**. No model output is saved until the whole proposal is valid and
-accepted. A deferred or incomplete setup exits nonzero and does not activate new
-timers; existing running services are not stopped. `setup_verify.py status` reports
+accepted. Save exits successfully with a pending proposal; incomplete matching
+cannot activate timers. Start briefly pauses existing schedules for authentication
+and verification, restoring them on failure. `setup_verify.py status` reports
 missing matching settings. Noninteractive `--stage2-only` fills missing settings;
 adding `--force` explicitly replaces existing generated settings.
 
@@ -102,8 +109,9 @@ Run `jobsmcp/bin/python3 generate_profile.py --setup` to review feeds alongside
 Flash/Pro matching settings. The recommendation model returns only catalogue IDs
 and reasons; local validation rejects unknown/duplicate choices and allows one
 correction attempt. Persistent errors offer **Manual / Retry / Later**, print the
-failure and log it in `state/setup.log`. No settings are published on failure or
-Later. Reinstall defaults to **Keep existing**, with no model or feed requests.
+failure and log it in the matching setup log. No settings are published on failure or
+Later. Reinstall defaults to **Keep existing**, with no model requests; choosing
+Start repeats read-only input checks and a real Telegram delivery test.
 Previously disabled publishers stay excluded from recommendations; manual selection
 can re-enable them. Direction updates reach Flash/Pro immediately; changing feeds
 requires another reviewed setup proposal.
@@ -144,7 +152,7 @@ hourly; FSF and Tails daily. Running `rss_poller.py` manually checks every enabl
 subscription. Installing/updating services still uses `./setup.sh`; repository edits
 alone do not activate them. The collector makes no model calls or deliveries.
 Reinstalling migrates the old generated daily RSS units to hourly polling with
-`--due`, retaining `.pre-hourly` backups. Custom units are preserved with a warning
+`--due`, retaining `.pre-setup` backups. Custom units are preserved with a warning
 to review their command and schedule.
 
 State remains under `state/rss/<publisher>/`: a shared job index, per-subscription
@@ -255,7 +263,8 @@ and the changes that could alter its regulatory classification.
 ├── feedback_poller.py      Polls Outlook for replies to weekly reports
 ├── generate_profile.py     Two-stage profile generation from user documents
 │
-├── setup.sh                Installer (systemd unit generation)
+├── setup.sh                Bootstrap for the guided Python installer
+├── setup_cli.py            Guided configuration; Linux activation is separate
 ├── setup_verify.py         Verifies an install is configured + delivering
 ├── delivery_canary.py      Synthetic message through the real deliver() path
 │
@@ -275,8 +284,8 @@ and the changes that could alter its regulatory classification.
 - Python ≥ 3.10, a single venv
 - DeepSeek API (flash + pro models)
 - Microsoft Graph API (Outlook email — optional)
-- Telethon (Telegram MTProto user-API)
-- SearXNG (self-hosted metasearch, Docker)
+- Telethon (Telegram MTProto user-API, only used for Telegram input)
+- SearXNG and a browser/PDF runtime (optional researched briefings)
 - systemd (user timers, no root)
 
 No LangChain. No hosted scrapers. No proprietary search APIs.

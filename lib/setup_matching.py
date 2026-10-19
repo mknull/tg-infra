@@ -3,6 +3,8 @@
 import difflib
 import json
 import logging
+import os
+import subprocess
 import urllib.error
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from .state import apply_text_updates
 from .rss_selection import SelectionDeferred, choose_mode, prepare_selection
 from .sources import feed_subscriptions
 from .rss_catalog import catalog_choices
+from .features import enabled
 
 
 def _ask(prompt: str, choices: dict[str, str], default: str) -> str:
@@ -73,6 +76,8 @@ def _preview(updates, expected):
                 (expected.get(path) or "").splitlines(keepends=True),
                 content.splitlines(keepends=True), fromfile=f"current/{path.name}",
                 tofile=f"proposed/{path.name}")))
+        elif path.name in PROFILE_FILES and os.environ.get("TG_SETUP_GUIDED") == "1":
+            print("\nInterpreted profile — " + path.name + ":\n" + content)
         elif path.name == "current-direction.md":
             print("\nUpdated preferences:\n" + content)
     print("\nFiles to save: " + ", ".join(str(path) for path in updates))
@@ -133,22 +138,47 @@ def _run_setup(generator) -> int:
     profile_complete = all((root / "source" / name).exists() and (root / "source" / name).read_text().strip()
                            for name in PROFILE_FILES)
     documents = None
+    guided = os.environ.get("TG_SETUP_GUIDED") == "1"
     if not profile_complete or force:
+        if guided:
+            print("\nYour profile: use your CV, letters or notes to configure your job search. Supported: PDF with text, TXT, MD, RST; immediate files only.")
+            print("PDFs need pdftotext (Ubuntu/Debian: sudo apt-get install poppler-utils). Convert DOCX/scans to text first, or use :text below.")
+            print("Enter a folder path, or :text to write a profile here. Documents and preferences will be sent to DeepSeek; generation incurs API charges.")
         prompt = "Documents directory (Enter to reuse current profile): " if profile_complete else "Documents directory (CV, letters, or text notes): "
         docs = input(prompt).strip()
-        if docs:
+        if guided and docs == ":text":
+            print("Write your experience and interests. Finish with a line containing only a dot.")
+            lines = []
+            while True:
+                line = input()
+                if line == ".":
+                    break
+                lines.append(line)
+            documents = "\n".join(lines).strip()
+            if not documents:
+                print("A written profile must not be empty. Choose Customize > Matching to retry.")
+                return 1
+            if len(documents) > 8000:
+                print("Written profile exceeds 8,000 characters; only its first 8,000 will be used.")
+        elif docs:
             try:
                 documents = generator.extract_text(Path(docs).expanduser())
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                 logging.error("Could not read documents: %s. No settings changed.", exc)
+                print("For PDF files, install pdftotext (Ubuntu: sudo apt-get install poppler-utils), or supply TXT/MD notes instead.")
                 return 1
         elif not profile_complete:
             print("Documents are needed to complete your profile. Re-run ./setup.sh when ready.")
             return 1
     user_name = env.get("USER_NAME", "").strip() or input("Your full name: ").strip() or "the user"
     feedback = input("Additional preferences (roles, alternatives, exclusions; Enter to keep current preferences): ").strip()
+    if guided:
+        print("Generation sends the selected document text/profile, source descriptions and preferences to DeepSeek using paid API calls.")
+        print("These calls are billed even if you later save or cancel the proposal. No application-wide spending cap is enforced.")
+        if _ask("Generate this proposal now? [Y/n]: ", {"y": "yes", "n": "later"}, "y") != "yes":
+            return 1
     expected = generator.generation_snapshot()
-    rss_mode = choose_mode(root, _ask)
+    rss_mode = choose_mode(root, _ask) if enabled("rss", root / "state") else "keep"
     feed_selection = None
     source_updates = None
     prepared_direction = None
@@ -190,7 +220,7 @@ def _run_setup(generator) -> int:
             logging.info("Matching preferences saved after review.")
             return int(bool(matching_gaps(root)))
         except (ValueError, OSError, TransportError, KeyError, TypeError) as exc:
-            logging.error("%s No matching settings changed. Details: state/setup.log", _error_message(exc))
+            logging.error("%s No matching settings changed. Details: %s", _error_message(exc), root / "state/setup.log")
             action = _ask("[R]etry now / Finish [L]ater [L]: ", {"r": "retry", "l": "later"}, "l")
             if action == "later":
                 print("Setup incomplete. Existing settings remain in use. Re-run ./setup.sh to continue.")

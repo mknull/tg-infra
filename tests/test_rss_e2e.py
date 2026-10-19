@@ -201,6 +201,26 @@ class TestRssCLI(unittest.TestCase):
         self.assertEqual(self.files("message_queue"), [])
         self.assertIn("RSS fixture", self.run_cli("audit", "--health", code=1))
 
+    def test_paused_input_retains_queue_and_resumes_delivery(self):
+        from lib.features import DEFAULTS
+        self.run_cli("rss_poller.py")
+        queued, = self.files("message_queue")
+        content = queued.read_bytes()
+        manifest = {"version": 1, "features": {**DEFAULTS, "rss": False, "email": True}, "schedules": {}}
+        (self.state / "installation.json").write_text(json.dumps(manifest))
+        requests = len(self.requests)
+        self.run_cli("rss_poller.py")
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(queued.read_bytes(), content)
+        self.assertEqual(len(self.requests), requests)
+        self.assertEqual(len(self.deliveries), 0)
+        self.assertIn("paused", self.run_cli("audit", "--health"))
+        manifest["features"]["rss"] = True
+        (self.state / "installation.json").write_text(json.dumps(manifest))
+        self.run_cli("it_jobs_triage.py")
+        self.assertEqual(self.files("message_queue"), [])
+        self.assertEqual(len(self.deliveries), 1)
+
     def test_large_feed_item_reaches_delivery_with_bounded_flash_calls(self):
         from tests.test_rss_subscriptions import xml
         self.feeds["/feed"] = xml("&lt;br/&gt;".join(

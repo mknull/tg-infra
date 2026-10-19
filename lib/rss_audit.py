@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .sources import feed_subscriptions, load_feeds
+from .features import enabled
 
 POLL_MAX_AGE = timedelta(hours=48)
 PROCESSING_GRACE = timedelta(hours=1)
@@ -98,6 +99,8 @@ def check_rss_health(state: Path, *, since: datetime,
     observed_messages = {}
     try:
         feeds = load_feeds(state / "feeds.json")
+        if not enabled("rss", state):
+            feeds = {key: {**feed, "enabled": False} for key, feed in feeds.items()}
     except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
         feeds = {}
         problems.append(f"RSS configuration invalid: {exc}")

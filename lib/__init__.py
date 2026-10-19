@@ -4,7 +4,7 @@
 from .api import call_deepseek, extract_json, TransportError, endpoint_reachable
 from .audit import write_audit
 from .auth import load_token, save_token, ensure_valid_token
-from .config import (PROJECT_DIR, STATE_DIR, DEEPSEEK_API_URL,
+from .config import (PROJECT_DIR, DATA_DIR, STATE_DIR, DEEPSEEK_API_URL,
                      FLASH_MODEL, PRO_MODEL, GRAPH_BASE, TOKEN_ENDPOINT,
                      TOKEN_FILE, TOKEN_REFRESH_BUFFER_S,
                      USER_NAME, TELEGRAM_CHAT_ID, load_env)

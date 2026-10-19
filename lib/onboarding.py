@@ -34,10 +34,11 @@ def resolve_monitored_folder(name: str, override: str = "") -> str:
     return name
 
 
-def missing_required(env: dict) -> list[str]:
+def missing_required(env: dict, manifest: dict | None = None) -> list[str]:
     """Return required config keys that are absent, blank, or still a CHANGE_ME."""
     missing = []
-    for k in REQUIRED_ENV:
+    from .features import required_credentials
+    for k in required_credentials(manifest):
         v = (env.get(k) or "").strip()
         if not v or v.upper().startswith("CHANGE"):
             missing.append(k)
