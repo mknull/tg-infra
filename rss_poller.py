@@ -26,6 +26,7 @@ from lib.sources import load_feeds
 
 MAX_FEED_BYTES = 2 * 1024 * 1024
 FETCH_TIMEOUT = 30
+_HOST_REQUESTS = {}
 
 
 def _now() -> str:
@@ -96,6 +97,7 @@ def plain_text(value: str, base: str, *, html: bool = True) -> str:
     if html:
         parser = _FeedText(base)
         parser.feed(value)
+        parser.close()
         value = "".join(parser.parts)
     return "\n".join(" ".join(line.split()) for line in value.splitlines() if line.strip())
 
@@ -118,7 +120,7 @@ def _repair_html_entities(raw: bytes) -> bytes:
 
 
 def parse_feed(raw: bytes, feed_url: str, *, allow_empty: bool = False,
-               repair_html_entities: bool = False) -> list[dict]:
+               repair_html_entities: bool = False, merge_variants: bool = False) -> list[dict]:
     """Normalize RSS 1/2 and Atom without fetching linked pages or inventing dates."""
     if repair_html_entities:
         raw = _repair_html_entities(raw)
@@ -155,7 +157,18 @@ def parse_feed(raw: bytes, feed_url: str, *, allow_empty: bool = False,
                 "categories": categories}
         # Repeated identical entries are harmless; conflicting identities need inspection.
         if external_id in items and items[external_id]["content_hash"] != item["content_hash"]:
-            raise ValueError(f"conflicting entries for {external_id}")
+            if not merge_variants:
+                raise ValueError(f"conflicting entries for {external_id}")
+            previous = items[external_id]
+            # WWR publishes regional variants under one GUID. Preserve every
+            # description, including geography/pay, in a deterministic revision.
+            variants = sorted(set(previous.get("variants", [previous["content"]]) + [content]))
+            item["variants"] = variants
+            item["content"] = "\n\nPosting variant:\n".join(variants)
+            item["content_hash"] = _digest(item["content"])
+            item["categories"] = sorted(set(previous["categories"] + categories))
+            dates = [date for date in (previous["posted_at"], posted_at) if date]
+            item["posted_at"] = max(dates) if dates else None
         items[external_id] = item
     return list(items.values())
 
@@ -163,8 +176,12 @@ def parse_feed(raw: bytes, feed_url: str, *, allow_empty: bool = False,
 def _selected(item: dict, feed: dict) -> bool:
     prefixes = feed.get("include_title_prefixes", [])
     categories = {value.casefold() for value in feed.get("include_categories", [])}
+    excluded_titles = tuple(p.casefold() for p in feed.get("exclude_title_prefixes", []))
+    excluded_urls = tuple(p.replace("http://", "https://") for p in feed.get("exclude_url_prefixes", []))
     return ((not prefixes or item["title"].casefold().startswith(tuple(p.casefold() for p in prefixes)))
-            and (not categories or bool(categories.intersection(c.casefold() for c in item["categories"]))))
+            and (not categories or not item["categories"] or bool(categories.intersection(c.casefold() for c in item["categories"])))
+            and not (excluded_titles and item["title"].casefold().startswith(excluded_titles))
+            and not (excluded_urls and item["url"].replace("http://", "https://").startswith(excluded_urls)))
 
 
 def fetch_feed(url: str, previous: dict) -> tuple[bytes | None, dict]:
@@ -177,6 +194,11 @@ def fetch_feed(url: str, previous: dict) -> tuple[bytes | None, dict]:
     for attempt in range(3):
         delay = 2 ** attempt
         try:
+            host = urlsplit(url).netloc
+            pause = 1 - (time.monotonic() - _HOST_REQUESTS.get(host, 0))
+            if pause > 0:
+                time.sleep(pause)
+            _HOST_REQUESTS[host] = time.monotonic()
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers),
                                         timeout=FETCH_TIMEOUT) as response:
                 raw = response.read(MAX_FEED_BYTES + 1)
