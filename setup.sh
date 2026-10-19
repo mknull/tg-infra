@@ -167,7 +167,7 @@ fi
 FEEDS_FILE="$STATE_DIR/feeds.json"
 if [[ ! -f "$FEEDS_FILE" ]]; then
     cp "$PROJECT_DIR/feeds.json.example" "$FEEDS_FILE"
-    log "Created $FEEDS_FILE — six RSS presets enabled; review sources here"
+    log "Created $FEEDS_FILE — RSS presets await your reviewed selection during matching setup"
 else
     skip "feeds.json already exists"
 fi
@@ -239,7 +239,7 @@ UNITS=(
     # oneshot unit then stays "activating" forever, and the timer skips every
     # later fire. systemd killing the hung run lets the next fire backfill.
     [telegram-poll]="Poll Telegram groups|*-*-* *:05,35:00|$PYTHON $PROJECT_DIR/it_jobs_poller.py|15min"
-    [rss-poll]="Poll RSS and Atom job feeds|*-*-* 06:10:00|$PYTHON $PROJECT_DIR/rss_poller.py|15min"
+    [rss-poll]="Poll RSS and Atom job feeds|*-*-* *:10:00|$PYTHON $PROJECT_DIR/rss_poller.py --due|15min"
     [job-triage]="Run triage on queued messages|*-*-* *:20,50:00|$PYTHON $PROJECT_DIR/it_jobs_triage.py"
     [email-ingest]="Fetch and triage Outlook emails|*-*-* 0/2:45:00|$PROJECT_DIR/email-ingest-wrap"
     [weekly-trend]="Weekly market trend report|Sun *-*-* 10:00:00|$PYTHON $PROJECT_DIR/weekly_trend.py"

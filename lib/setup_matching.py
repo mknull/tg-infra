@@ -12,6 +12,9 @@ from .direction import (direction_lock, direction_updates, load_current_directio
 from .matching import (PROFILE_FILES, ROLE_FIELDS, matching_gaps, missing_role_fields,
                        source_configs)
 from .state import apply_text_updates
+from .rss_selection import SelectionDeferred, choose_mode, prepare_selection
+from .sources import feed_subscriptions
+from .rss_catalog import catalog_choices
 
 
 def _ask(prompt: str, choices: dict[str, str], default: str) -> str:
@@ -42,6 +45,27 @@ def _preview(updates, expected):
             collection = "channels" if path.name == "channels.json" else "feeds"
             for entry in json.loads(content)[collection]:
                 print(f"\n{entry.get('username', entry.get('id'))}:")
+                if collection == "feeds":
+                    before = json.loads(expected.get(path) or '{"feeds":[]}')
+                    old = next((e for e in before["feeds"] if e["id"] == entry["id"]), None)
+                    old_urls = {s["url"] for s in feed_subscriptions(old)} if old and old.get("enabled", True) else set()
+                    subscriptions = feed_subscriptions(entry) if entry.get("enabled", True) else []
+                    new_urls = {s["url"] for s in subscriptions}
+                    print("  " + ("Enabled" if subscriptions else "Disabled"))
+                    options = catalog_choices()
+                    reasons = json.loads(content).get("rss_selection_reasons", {})
+                    for sub in subscriptions:
+                        option = next((o for o in options.values() if o["url"] == sub["url"] and o["publisher_id"] == entry["id"]), None)
+                        label = option["label"] if option else sub["id"]
+                        print(f"  {'ADD' if sub['url'] not in old_urls else 'KEEP'} {label}: {sub['url']}")
+                        if option:
+                            print("    " + option["publisher_coverage"])
+                            print("    " + reasons.get(f"{entry['id']}:{option['id']}", "Existing choice"))
+                        print(f"    Poll every {sub['poll_interval_hours']}h; backfill: {sub.get('backfill', {}).get('mode', 'all')}")
+                        if sub.get("exclude_title_prefixes"):
+                            print("    Excluded title prefixes: " + ", ".join(sub["exclude_title_prefixes"]))
+                    for url in sorted(old_urls - new_urls):
+                        print(f"  REMOVE {url}")
                 for field in ROLE_FIELDS:
                     print(f"  {field}: {entry.get(field, '(unset)')}")
         elif path.name.endswith("criteria.md"):
@@ -63,7 +87,7 @@ def run_setup(generator) -> int:
     logging.getLogger().addHandler(handler)
     try:
         return _run_setup(generator)
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt, SelectionDeferred):
         print("\nMatching setup deferred. Existing settings remain in use. Re-run ./setup.sh to continue.")
         return 1
     finally:
@@ -124,6 +148,8 @@ def _run_setup(generator) -> int:
     user_name = env.get("USER_NAME", "").strip() or input("Your full name: ").strip() or "the user"
     feedback = input("Additional preferences (roles, alternatives, exclusions; Enter to keep current preferences): ").strip()
     expected = generator.generation_snapshot()
+    rss_mode = choose_mode(root, _ask)
+    feed_selection = None
     source_updates = None
     prepared_direction = None
     while True:
@@ -134,8 +160,12 @@ def _run_setup(generator) -> int:
             if feedback and prepared_direction is None:
                 prepared_direction = prepare_direction(feedback, api_key, load_current_direction())
             preferences = prepared_direction[0] if prepared_direction else load_current_direction()
+            if feed_selection is None:
+                feed_selection = prepare_selection(root, profile, preferences, api_key,
+                                                   generator.call_deepseek, rss_mode, _ask)
             updates = {**source_updates, **generator.build_stage2_updates(
-                user_name, api_key, force, profile_context=profile, preferences=preferences)}
+                user_name, api_key, force, profile_context=profile, preferences=preferences,
+                config_overrides=feed_selection)}
             if prepared_direction:
                 updates.update(direction_updates(*prepared_direction))
             if not updates:
@@ -152,6 +182,8 @@ def _run_setup(generator) -> int:
                 if revision:
                     feedback = feedback + "\nLatest correction (overrides earlier preferences): " + revision
                     prepared_direction = None
+                    if rss_mode != "keep":
+                        feed_selection = None
                 continue
             with direction_lock():
                 apply_text_updates(updates, expected)
@@ -166,3 +198,4 @@ def _run_setup(generator) -> int:
             # Re-read inputs: a stale proposal must never overwrite a newer preference update.
             expected = generator.generation_snapshot()
             prepared_direction = None
+            feed_selection = None

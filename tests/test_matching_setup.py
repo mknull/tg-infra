@@ -34,6 +34,12 @@ class TestMatchingSetup(unittest.TestCase):
         self.feeds = self.state / "feeds.json"
         shutil.copy2(self.root / "channels.json.example", self.channels)
         shutil.copy2(self.root / "feeds.json.example", self.feeds)
+        # These cases exercise matching updates on already reviewed RSS choices.
+        feeds = json.loads(self.feeds.read_text())
+        feeds["rss_selection_reviewed"] = True
+        for feed in feeds["feeds"]:
+            feed["enabled"] = True
+        self.feeds.write_text(json.dumps(feeds))
         config = json.loads(self.channels.read_text())
         config["channels"][0]["username"] = "design_jobs"
         config["channels"][0]["description"] = "Design and technology vacancies"
@@ -69,9 +75,14 @@ class TestMatchingSetup(unittest.TestCase):
         for name in generator.PROFILE_FILES:
             (self.root / "source" / name).write_text("Jane: accessibility designer, user research, prototyping.")
 
-    def run_ui(self, answers, model=None):
+    def run_ui(self, answers, model=None, keep_rss=True):
         output = io.StringIO()
-        with redirect_stdout(output), patch("builtins.input", side_effect=answers), patch.object(
+        responses = iter(answers)
+        def answer(prompt):
+            if keep_rss and prompt.startswith("[K]eep RSS choices"):
+                return "k"
+            return next(responses)
+        with redirect_stdout(output), patch("builtins.input", side_effect=answer), patch.object(
                 generator, "call_deepseek", side_effect=model or self.fake_model) as call:
             code = run_setup(generator)
         return code, output.getvalue(), call

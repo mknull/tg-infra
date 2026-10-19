@@ -108,6 +108,8 @@ class _FeedState(unittest.TestCase):
 class TestIngestion(_FeedState):
     def test_fsf_filters_volunteer_and_information_entries_before_queueing(self):
         preset = load_feeds(Path(__file__).resolve().parents[1] / "feeds.json.example")["fsf"]
+        preset["exclude_title_prefixes"] = ["Volunteer opportunity:"]  # Reviewed paid-only choice.
+        preset["exclude_url_prefixes"] = ["https://jobs.example/faq"]
         with patch.object(rss, "fetch_feed", return_value=(fixture("fsf"), {})):
             result = rss.poll_feed(preset, self.state)
         self.assertEqual((result["new"], result["filtered"], result["queued"]), (1, 2, 1))
@@ -116,6 +118,7 @@ class TestIngestion(_FeedState):
 
     def test_category_selection_changes_reconsider_excluded_entries(self):
         preset = load_feeds(Path(__file__).resolve().parents[1] / "feeds.json.example")["wwr"]
+        preset["include_categories"] = ["Back-End Programming"]  # Custom local selector remains supported.
         with patch.object(rss, "fetch_feed", return_value=(fixture("categories"), {})) as fetch:
             result = rss.poll_feed(preset, self.state)
             self.assertEqual((result["queued"], result["filtered"]), (1, 1))

@@ -65,8 +65,9 @@ Run `./setup.sh` to configure matching, or
 Setup uses your documents and any additional preferences to generate Flash's
 `desired_roles` / `acceptable_roles` for enabled Telegram channels and RSS feeds,
 plus Pro's criteria. It previews the role preferences and criteria changes before
-**Apply / Revise preferences / Later**. Feed subscriptions and intake filters stay
-as configured.
+**Apply / Revise preferences / Later**. RSS offers **Recommend from my preferences /
+Choose myself / Disable RSS**, using verified catalogue choices. Subscriptions and
+matching settings are saved together after review. Existing custom URLs are retained.
 
 On reinstall, **Keep existing** is the default and makes no model calls.
 **Complete missing setup** fills empty/template fields while keeping personalized
@@ -83,93 +84,105 @@ adding `--force` explicitly replaces existing generated settings.
 
 ### RSS/Atom feeds
 
-RSS 1.0/RDF, RSS 2.0, and Atom use the same collector.
-[feeds.json.example](feeds.json.example) includes six enabled presets:
+RSS 1.0/RDF, RSS 2.0 and Atom share the collector and Telegram job-triage queue.
+The six presets in [feeds.json.example](feeds.json.example) start disabled until
+setup reviews your choices. [The catalogue](lib/rss_catalog.json) records verified
+URLs, coverage caveats and publisher-specific parsing options.
 
-| Feed | Intake behavior |
+| Publisher | Reviewed choices and intake |
 | --- | --- |
-| [FOSSJobs](https://www.fossjobs.net/rss/all/) | Full feed descriptions |
-| [FSF](https://www.fsf.org/resources/jobs/RSS/) | Only titles beginning with “Job opportunity:”; excludes volunteer and information entries |
-| [Open Source JobHub](https://opensourcejobhub.com/rss/) | Full feed descriptions |
-| [We Work Remotely](https://weworkremotely.com/remote-jobs.rss) | Locally selects programming and DevOps categories; preserves category labels for triage |
-| [NoDesk](https://nodesk.co/remote-jobs/index.xml) | Feed descriptions; explicitly repairs known HTML named entities in XML text |
-| [Tails](https://tails.net/jobs/index.rss) | Allows a valid empty feed between openings; never infers closures |
+| [FOSSJobs](https://www.fossjobs.net/rss/) | All jobs or 11 categories, each with its own retained window. Full descriptions. |
+| [FSF](https://www.fsf.org/resources/jobs/) | One jobs feed; exclude information pages. Setup asks whether to include volunteering. Fetch the linked full description. |
+| [Open Source JobHub](https://opensourcejobhub.com/rss/) | General feed with full descriptions. Tested keyword/category query parameters were ignored. |
+| [We Work Remotely](https://weworkremotely.com/remote-job-rss-feed) | Published categories across professions; regional variants sharing an ID stay together. “All Programming” did not cover back-end jobs in verification. |
+| [NoDesk](https://nodesk.co/remote-jobs/) | Advertised role-category feeds, entity repair, and full JobPosting descriptions from linked pages. |
+| [Tails](https://tails.net/jobs/) | One optional feed; a valid empty feed is normal. |
 
-All six endpoints were fetched successfully on 2026-10-18 (Asia/Nicosia).
-Tails had no entries. Availability and feed contents can change; failures remain
-visible in health checks. WWR category labels are publisher-supplied, so triage
-still checks the actual job. FSF and NoDesk may provide summaries rather than
-full postings; source links are retained.
+Run `jobsmcp/bin/python3 generate_profile.py --setup` to review feeds alongside
+Flash/Pro matching settings. The recommendation model returns only catalogue IDs
+and reasons; local validation rejects unknown/duplicate choices and allows one
+correction attempt. Persistent errors offer **Manual / Retry / Later**, print the
+failure and log it in `state/setup.log`. No settings are published on failure or
+Later. Reinstall defaults to **Keep existing**, with no model or feed requests.
+Previously disabled publishers stay excluded from recommendations; manual selection
+can re-enable them. Direction updates reach Flash/Pro immediately; changing feeds
+requires another reviewed setup proposal.
 
-```bash
-jobsmcp/bin/python3 -m pip install -r requirements.txt
-# First-time configuration only; preserve an existing feeds.json.
-cp -n feeds.json.example state/feeds.json
-jobsmcp/bin/python3 rss_poller.py
-./audit rss --content
+For new subscriptions, setup fetches a read-only preview of available counts and
+dates. Choose **Recent 30 days / Future arrivals only / All available**. Recent mode
+keeps unknown dates; future-only records the initial inventory without sending it.
+Overlapping subscriptions share one publisher history. Old entries can represent
+closed vacancies; neither age nor disappearance establishes current availability.
+
+A publisher can use a legacy `url` or several subscriptions:
+
+```json
+{
+  "id": "fossjobs",
+  "name": "FOSSJobs",
+  "enabled": true,
+  "desired_roles": "Your reviewed role preferences",
+  "acceptable_roles": "Your reviewed alternatives",
+  "subscriptions": [
+    {"id": "researchers", "url": "https://www.fossjobs.net/rss/researchers/",
+     "poll_interval_hours": 1, "allow_empty": true,
+     "backfill": {"mode": "recent", "days": 30}}
+  ]
+}
 ```
 
-Review enabled sources before running: the collector queues **all currently
-available entries matching each feed's filters on its first run**. The
-existing `job-triage` timer evaluates them against `state/it-jobs-criteria.md` and
-delivers matches; `/briefme` and weekly reporting include feed content. Feed titles,
-original URLs, and application links are preserved. The collector does not crawl linked pages.
+Custom URLs remain supported. Set a publisher's `enabled` to `false` to pause its
+polling and queued triage. Missing configuration disables RSS. Keep publisher `id`
+values stable: they identify jobs, queue messages and delivery references.
+Optional title/category selectors and URL/title exclusions run before matching.
+Missing category metadata stays eligible for Flash/Pro. Catalogue feeds accept
+valid empty inventories; malformed XML and challenge pages remain errors.
 
-Add another object to `state/feeds.json` with a unique stable `id`, `name`, and `url`;
-`desired_roles` and `acceptable_roles` tune Flash. Set `enabled` to `false` to pause
-both polling and pending triage for that feed. Missing configuration disables RSS.
-For an existing deployment, merge the additional presets into its existing
-configuration; installation preserves that file.
+The timer runs hourly at **10 minutes past the hour** with `rss_poller.py --due`.
+Subscriptions choose their own cadence: catalogue feeds with short windows poll
+hourly; FSF and Tails daily. Running `rss_poller.py` manually checks every enabled
+subscription. Installing/updating services still uses `./setup.sh`; repository edits
+alone do not activate them. The collector makes no model calls or deliveries.
 
-Optional selectors `include_title_prefixes` and `include_categories` are lists
-matched without regard to case (categories match exactly). Empty lists accept all
-titles/categories. When both are present, both must match. Changing selectors
-forces a fresh fetch so newly included entries are reconsidered.
-`repair_html_entities` is enabled only for NoDesk's known publisher defect;
-unknown entities and malformed XML still fail. `allow_empty` is enabled only for
-Tails; other empty feeds remain errors. Neither option changes stored raw responses.
+State remains under `state/rss/<publisher>/`: a shared job index, per-subscription
+HTTP checkpoints/raw snapshots/status, item dispositions and cached details.
+Legacy IDs and processed history survive category changes. An unfamiliar feed's
+representation is baselined without resending an existing job; subsequent content
+changes can create a new revision. Repeated revisions and date-only changes do not
+requeue. Deduplication spans subscriptions within a publisher, not different sites.
 
-`setup.sh` seeds these presets on fresh installs and generates
-`rss-poll.service` / `rss-poll.timer`, scheduled daily at **06:10 host local time**.
-Existing deployments need the new unit installed and enabled; editing this repository
-alone does not activate it. `./setup.sh` installs the new timer through the existing
-setup/verification flow. The collector itself makes no model calls or deliveries.
+Requests use conditional GET, timeouts, a 2 MiB limit, bounded retries and host
+throttling. FSF/NoDesk details are cached by feed revision, with at most 20 detail
+requests per publisher per poll. Failed or deferred details stay retryable even
+when the job leaves the feed window. Page-only changes are not detected until the
+feed entry changes. Snapshots/history are retained without automatic pruning.
 
-Each feed keeps a persistent JSON index under `state/rss/<id>/` plus raw response
-snapshots and poll status. Identity uses the feed's entry ID, falling back to its
-URL. A changed description creates a new queued revision of the same job; unchanged
-polls and publication-date-only changes do not requeue it. Disappearing entries remain
-in the index and are never inferred closed. This first channel does not attempt
-cross-feed duplicate matching or a full job catalog/export.
+`./audit --health` checks per-subscription failures and polls overdue by twice their
+cadence. It reconciles recorded item dispositions, arrivals, queue, Flash/Pro
+outcomes and delivery acknowledgements. Pending processing exceeds its grace after
+one hour; disabled publishers retain paused work. Missing evidence, failed decisions,
+duplicate evaluations/deliveries and unacknowledged sends fail health. Unresolved
+work does not age out with `--days`. Audit reads runtime evidence only; source
+selection, relevance judgments, network probes and repairs stay outside it.
 
-HTTP fetching uses conditional requests, timeouts, a 2 MiB response limit, and bounded
-retries. Malformed, unexpectedly empty, or blocked feeds fail independently without advancing their
-index. `./audit --health` reports feed failures and polls older than 48 hours.
-For RSS it also reconciles the ingestion index, arrivals, queue, Flash/Pro decisions
-and delivery acknowledgements by message revision. It fails on items unfinished
-after one hour, missing arrivals, invalid/dead-lettered decisions, duplicate
-evaluations or deliveries, and sends without a matching successful delivery result.
-Unfinished items, latest failed evaluations and unacknowledged sends are checked
-even outside `--days`; historical evaluation/duplicate checks use that window.
-Queued items from disabled feeds
-are reported as paused. Poll counters expose source filtering; HTTP 304 is healthy.
-Audit verifies recorded processing and delivery-service acceptance, not relevance
-judgments or vacancies that a publisher never exposed in the configured feed.
-Raw snapshots and the index are retained without automatic pruning.
-
-Run the isolated RSS tests with:
+Run the isolated feature tests:
 
 ```bash
-jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_audit tests.test_rss_e2e tests.test_system_setup -v
+jobsmcp/bin/python3 -m unittest tests.test_rss tests.test_rss_publishers tests.test_rss_subscriptions tests.test_rss_selection tests.test_rss_audit tests.test_rss_e2e -q
 ```
 
-The process-level tests launch the collector, triage worker and audit CLI in a
-temporary project with a loopback HTTP server. They verify delivery, unchanged
-reruns (HTTP 200 and 304), changed revisions, source failure isolation and recovery
-from a model outage. External API endpoints are redirected by the test harness;
-no real model calls or Telegram messages are made. CI discovers these tests
-automatically. Live deployment credentials and service availability still need
-the existing setup verification and delivery canary.
+Process tests exercise real collector/triage/audit entry points with loopback feed,
+model and delivery endpoints. They cover migration, overlap, replay, changed jobs,
+backfill and outage recovery without live messages. To recheck public endpoints
+without models, delivery or runtime-state writes:
+
+```bash
+jobsmcp/bin/python3 scripts/verify_rss_catalog.py --output /tmp/rss-verification
+```
+
+See [verification results and limits](docs/rss-feed-verification.md) and the
+[implementation plan](docs/rss-feed-plan.md). Full regression tests must run in a
+disposable copy as described in [CLAUDE.md](CLAUDE.md).
 
 ### `/briefme` agent
 
@@ -242,7 +255,7 @@ and the changes that could alter its regulatory classification.
 ├── state/                  Runtime state (cursors, audit, queue, config, tokens)
 ├── state/channels.json     Per-channel descriptions, desired/acceptable roles
 ├── channels.json.example   Seed for state/channels.json on a clean checkout
-├── feeds.json.example      FOSSJobs preset for state/feeds.json
+├── feeds.json.example      RSS publisher presets for reviewed setup
 ├── source/                 Profile inputs (interests, skills, tech_stack)
 ├── tests/                  Unit and integration tests; feeds use offline fixtures
 │

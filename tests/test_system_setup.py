@@ -142,7 +142,8 @@ class TestSetupScript(unittest.TestCase):
         service = (self.systemd / "rss-poll.service").read_text()
         self.assertIn(str(self.project / "rss_poller.py"), service)
         self.assertIn("TimeoutStartSec=15min", service)
-        self.assertIn("OnCalendar=*-*-* 06:10:00", (self.systemd / "rss-poll.timer").read_text())
+        self.assertIn("OnCalendar=*-*-* *:10:00", (self.systemd / "rss-poll.timer").read_text())
+        self.assertIn("rss_poller.py --due", service)
 
     def test_email_ingest_service_uses_wrapper(self):
         """email-ingest.service runs the shell wrapper, not email_triage.py."""
@@ -174,12 +175,13 @@ class TestSetupScript(unittest.TestCase):
         docs = tmp / "documents"
         docs.mkdir()
         (docs / "cv.txt").write_text("Jane is an accessibility designer and user researcher.")
-        # Replaces model calls only; prompt assembly, validation and persistence stay real.
+        # Substitute model/feed services; setup, validation and persistence stay real.
         (project / "sitecustomize.py").write_text('''
 import json
 from pathlib import Path
 import lib
 import lib.direction
+import rss_poller
 def fake_model(model, prompt, key, timeout=90):
     with Path("model-calls").open("a") as stream:
         stream.write("call\\n")
@@ -188,6 +190,8 @@ def fake_model(model, prompt, key, timeout=90):
     if "career analyst" in prompt:
         return "\\n".join("###FILE: " + name + "###\\nJane: accessibility designer, user research."
                          for name in ("interests.txt", "skills.txt", "tech_stack.txt"))
+    if "Select RSS job feeds" in prompt:
+        return '{"choices":[{"id":"wwr:design","reason":"Accessibility design"}]}'
     if "Generate Flash" in prompt:
         if Path("invalid-model-response").exists():
             return "invalid JSON"
@@ -197,6 +201,7 @@ def fake_model(model, prompt, key, timeout=90):
     return "# Candidate Profile\\nJane: accessibility design and research."
 lib.call_deepseek = fake_model
 lib.direction.call_deepseek = fake_model
+rss_poller.fetch_feed = lambda url, previous: (b'<rss version="2.0"><channel><title>Fixture</title><link>https://example.org/</link></channel></rss>', {})
 ''')
         (project / "setup_verify.py").write_text(
             'from pathlib import Path\nPath("verification-called").touch()\n')
@@ -210,7 +215,7 @@ lib.direction.call_deepseek = fake_model
         if invalid_json:
             (project / "invalid-model-response").touch()
         result = subprocess.run(["bash", str(project / "setup.sh")], cwd=project,
-                                env=env, input=f"y\n{docs}\n\n{'l' if invalid_json else 'a'}\n",
+                                env=env, input=f"y\n{docs}\n\nr\nr\n{'l' if invalid_json else 'a'}\n",
                                 capture_output=True, text=True, timeout=30)
         return project, env, result
 
@@ -221,6 +226,8 @@ lib.direction.call_deepseek = fake_model
         self.assertIn("enable --now job-triage.timer", Path(env["SETUP_TEST_SYSTEMCTL_LOG"]).read_text())
         roles = json.loads((project / "state/channels.json").read_text())["channels"][0]
         self.assertEqual(roles["desired_roles"], "Accessibility designer")
+        enabled = [f for f in json.loads((project / "state/feeds.json").read_text())["feeds"] if f["enabled"]]
+        self.assertEqual(enabled[0]["subscriptions"][0]["id"], "design")
         calls = (project / "model-calls").read_bytes()
         again = subprocess.run(["bash", str(project / "setup.sh")], cwd=project, env=env,
                                input="\n", capture_output=True, text=True, timeout=30)

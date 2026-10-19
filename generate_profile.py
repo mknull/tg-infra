@@ -311,11 +311,13 @@ def read_profile() -> str:
 
 def build_stage2_updates(user_name: str, api_key: str, force: bool = False,
                          profile_context: str | None = None,
-                         preferences: str | None = None) -> dict[Path, str]:
+                         preferences: str | None = None,
+                         config_overrides: dict[Path, str] | None = None) -> dict[Path, str]:
     profile_context = profile_context if profile_context is not None else read_profile()
     profile_context += direction_context() if preferences is None else (
         "\n\nExplicit current preferences (override conflicting historical information):\n" + preferences)
-    updates = build_flash_updates(PROJECT_DIR, profile_context, api_key, call_deepseek, force)
+    updates = {**(config_overrides or {}), **build_flash_updates(
+        PROJECT_DIR, profile_context, api_key, call_deepseek, force, config_overrides)}
 
     for criteria_path, example_path in [
         (CRITERIA_TELEGRAM, PROJECT_DIR / "it-jobs-criteria.md.example"),

@@ -3,6 +3,7 @@
 Standalone Python job-market intelligence, scheduled by user-level systemd timers.
 DeepSeek handles model calls; Claude Code is development tooling, not a runtime dependency.
 See [README.md](README.md) for architecture and [CLAUDE.md](CLAUDE.md) for development conventions.
+RSS: [verified behavior and limits](docs/rss-feed-verification.md) · [scope and plan](docs/rss-feed-plan.md).
 
 - **Entry points:** `it_jobs_poller.py` → disk queue → `it_jobs_triage.py` → `lib/delivery.py`.
   `rss_poller.py` adds RSS/Atom feeds to the same queue; see `feeds.json.example`.

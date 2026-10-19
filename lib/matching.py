@@ -15,15 +15,16 @@ PLACEHOLDERS = {
 }
 
 
-def source_configs(root: Path):
+def source_configs(root: Path, overrides: dict[Path, str] | None = None):
+    overrides = overrides or {}
     for filename, collection, identity, kind in (
         ("channels.json", "channels", "username", "telegram"),
         ("feeds.json", "feeds", "id", "rss"),
     ):
         path = root / "state" / filename
-        if not path.exists():
+        if not path.exists() and path not in overrides:
             continue
-        config = json.loads(path.read_text())
+        config = json.loads(overrides[path] if path in overrides else path.read_text())
         entries = config[collection]
         if not isinstance(entries, list) or any(not isinstance(e, dict) for e in entries):
             raise ValueError(f"{filename}: {collection} must be a list of objects")
@@ -57,6 +58,9 @@ def matching_gaps(root: Path) -> list[str]:
         if not path.exists() or not path.read_text().strip():
             gaps.append(f"state/{name}")
     try:
+        feeds_path = root / "state/feeds.json"
+        if feeds_path.exists() and json.loads(feeds_path.read_text()).get("rss_selection_reviewed") is False:
+            gaps.append("RSS feed selection needs review")
         for path, _, entries, defaults, identity, _ in source_configs(root):
             for entry in entries:
                 if entry.get("enabled", True):
@@ -69,9 +73,9 @@ def matching_gaps(root: Path) -> list[str]:
 
 
 def build_flash_updates(root: Path, profile: str, api_key: str, call_model,
-                        force: bool = False) -> dict[Path, str]:
+                        force: bool = False, config_overrides: dict[Path, str] | None = None) -> dict[Path, str]:
     """One batched Pro request; one correction attempt; no writes until validated."""
-    configs = list(source_configs(root))
+    configs = list(source_configs(root, config_overrides))
     targets = {}
     for path, config, entries, defaults, identity, kind in configs:
         for entry in entries:

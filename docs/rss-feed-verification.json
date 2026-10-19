@@ -1,0 +1,484 @@
+{
+  "checked_at": "2026-10-18T20:10:42.414951+00:00",
+  "subscriptions": [
+    {
+      "id": "fossjobs:all",
+      "url": "https://www.fossjobs.net/rss/all/",
+      "count": 10,
+      "sha256": "d89ef7f9b1b00a4a81c9ce0952d91a00ad1112c86050f31e6328a6ee6f35d73f",
+      "oldest": "2026-06-01T14:39:46Z",
+      "newest": "2026-10-13T17:03:16Z"
+    },
+    {
+      "id": "fossjobs:administrators",
+      "url": "https://www.fossjobs.net/rss/administrators/",
+      "count": 10,
+      "sha256": "266d2af860f4a34e33a7da8eb28a41f4385dd062ccb9fa888eaa73bbf50f3564",
+      "oldest": "2025-02-10T13:57:22Z",
+      "newest": "2026-09-16T14:21:25Z"
+    },
+    {
+      "id": "fossjobs:editors",
+      "url": "https://www.fossjobs.net/rss/editors/",
+      "count": 10,
+      "sha256": "a4f0d90102375b3cc37270d3258527889a6b1be24960c5109aa343dd4d444d2f",
+      "oldest": "2022-05-20T18:47:53Z",
+      "newest": "2026-07-09T11:19:01Z"
+    },
+    {
+      "id": "fossjobs:marketing",
+      "url": "https://www.fossjobs.net/rss/marketing/",
+      "count": 10,
+      "sha256": "2fa0edc2755ad9ab5495faf5f63bf958ffbaacc21f776dbbf3ef189eaa95e57f",
+      "oldest": "2022-09-16T21:23:56Z",
+      "newest": "2026-02-27T18:12:25Z"
+    },
+    {
+      "id": "fossjobs:designers",
+      "url": "https://www.fossjobs.net/rss/designers/",
+      "count": 10,
+      "sha256": "018865b31093bdafae0185f79886e8493afb16953111ff0b5b7335fa89b2b706",
+      "oldest": "2021-10-14T19:37:40Z",
+      "newest": "2023-09-11T14:47:09Z"
+    },
+    {
+      "id": "fossjobs:managers",
+      "url": "https://www.fossjobs.net/rss/managers/",
+      "count": 10,
+      "sha256": "c08064784e48781d6d3296e70f536a0f34e5a9245720585a91306af6947bb2da",
+      "oldest": "2024-11-22T20:59:46Z",
+      "newest": "2026-06-17T11:29:49Z"
+    },
+    {
+      "id": "fossjobs:testers",
+      "url": "https://www.fossjobs.net/rss/testers/",
+      "count": 10,
+      "sha256": "8da1c188926b34b119f11c352bce47297c343797629b51712990ec02a1ff867b",
+      "oldest": "2021-09-08T20:23:45Z",
+      "newest": "2023-07-10T09:02:48Z"
+    },
+    {
+      "id": "fossjobs:consultants",
+      "url": "https://www.fossjobs.net/rss/consultants/",
+      "count": 10,
+      "sha256": "ddc5005745c2efd5c0dfea9b516dba1bbdf8a7c9d69dc464512d6253546d1749",
+      "oldest": "2022-11-03T07:18:47Z",
+      "newest": "2025-07-17T09:58:30Z"
+    },
+    {
+      "id": "fossjobs:programmers",
+      "url": "https://www.fossjobs.net/rss/programmers/",
+      "count": 10,
+      "sha256": "f19e874083da6d0dd8868be7165f9e3469cc6f072982318fdee77b5eb6aa2f40",
+      "oldest": "2026-02-09T14:34:51Z",
+      "newest": "2026-10-07T22:22:49Z"
+    },
+    {
+      "id": "fossjobs:researchers",
+      "url": "https://www.fossjobs.net/rss/researchers/",
+      "count": 10,
+      "sha256": "8dd4aca1bb0f8ad928f3a077566463c35ffb0c72fb5bb151d23f2288d29925c7",
+      "oldest": "2018-06-28T20:00:45Z",
+      "newest": "2026-09-06T19:48:18Z"
+    },
+    {
+      "id": "fossjobs:translators",
+      "url": "https://www.fossjobs.net/rss/translators/",
+      "count": 3,
+      "sha256": "0ac43b8ec00cce5abd73568c551281275e7fb8111046356d2bf47fa3ff41188a",
+      "oldest": "2012-11-17T22:58:15Z",
+      "newest": "2012-11-26T17:24:29Z"
+    },
+    {
+      "id": "fossjobs:support",
+      "url": "https://www.fossjobs.net/rss/support/",
+      "count": 10,
+      "sha256": "97a143a7ec4bf78be956aed836bcf44310d33e9b164d2b0ebf64e56215151b49",
+      "oldest": "2023-01-10T09:46:05Z",
+      "newest": "2026-10-13T17:03:16Z"
+    },
+    {
+      "id": "fsf:all",
+      "url": "https://static.fsf.org/fsforg/rss/jobs.xml",
+      "count": 6,
+      "sha256": "587b5e2a346cc9776248aaf754a502cba33619c68e10ef1d4694c73bb8506230",
+      "oldest": null,
+      "newest": null
+    },
+    {
+      "id": "opensourcejobhub:all",
+      "url": "https://opensourcejobhub.com/rss/",
+      "count": 32,
+      "sha256": "f6ec1acbe6cacdad08ad4052e25e7a1634dbc4dfb23f99d7d77348fb62187ef1",
+      "oldest": "2022-12-01T20:25:36Z",
+      "newest": "2026-10-14T20:10:04Z"
+    },
+    {
+      "id": "wwr:all",
+      "url": "https://weworkremotely.com/remote-jobs.rss",
+      "count": 88,
+      "sha256": "9ee53b2653138a8428694202ae4f42a3ececbda0da3f5d5b11d3794e4c5c0e97",
+      "oldest": "2026-01-21T19:48:20Z",
+      "newest": "2026-10-18T07:31:05Z"
+    },
+    {
+      "id": "wwr:customer-support",
+      "url": "https://weworkremotely.com/categories/remote-customer-support-jobs.rss",
+      "count": 60,
+      "sha256": "517a795c52a91d66ecd5a5bb453e8c03fab973dc1be58bedd2df61cb9defd043",
+      "oldest": "2025-12-05T10:37:40Z",
+      "newest": "2026-10-16T07:31:00Z"
+    },
+    {
+      "id": "wwr:product",
+      "url": "https://weworkremotely.com/categories/remote-product-jobs.rss",
+      "count": 23,
+      "sha256": "c752bbf4d58060d6519c4d3d4a5566abe305c6fb0023743810509a7fe5b80e90",
+      "oldest": "2026-09-23T07:31:13Z",
+      "newest": "2026-10-17T07:31:02Z"
+    },
+    {
+      "id": "wwr:full-stack-programming",
+      "url": "https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss",
+      "count": 65,
+      "sha256": "bd229921785d30bf4e7689d800732bf13435e03bbe2dbd9993850f649d1398e3",
+      "oldest": "2024-05-13T03:14:30Z",
+      "newest": "2026-10-18T07:31:05Z"
+    },
+    {
+      "id": "wwr:back-end-programming",
+      "url": "https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss",
+      "count": 3,
+      "sha256": "3b836fb22a343efe34b08e590eea96fc5fe80e19f3ba677be7e2bb322f46c157",
+      "oldest": "2026-09-17T10:51:23Z",
+      "newest": "2026-10-18T07:30:58Z"
+    },
+    {
+      "id": "wwr:front-end-programming",
+      "url": "https://weworkremotely.com/categories/remote-front-end-programming-jobs.rss",
+      "count": 5,
+      "sha256": "51896b3b04a453392b130bb04a5546d1bdbd203edfa9d672d8d988b00e49710c",
+      "oldest": "2026-09-28T22:12:45Z",
+      "newest": "2026-10-02T17:39:45Z"
+    },
+    {
+      "id": "wwr:programming",
+      "url": "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+      "count": 24,
+      "sha256": "724f089d329ca5ade2205e4b6cbd2f7622496ab0af8424ed0fea6aafe4433ae3",
+      "oldest": "2024-05-13T03:14:30Z",
+      "newest": "2026-10-02T17:39:45Z"
+    },
+    {
+      "id": "wwr:sales-and-marketing",
+      "url": "https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss",
+      "count": 125,
+      "sha256": "bd24a76d33a0f0044c530f98bf2ce3a340882a6af40ac603140506864abd93e4",
+      "oldest": "2025-05-13T12:15:43Z",
+      "newest": "2026-10-18T07:31:05Z"
+    },
+    {
+      "id": "wwr:management-and-finance",
+      "url": "https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss",
+      "count": 20,
+      "sha256": "87cd958067a563739cd5dade8dc1a6d02b2a41396ac5e65669b7fb6716c23c76",
+      "oldest": "2023-02-07T20:07:41Z",
+      "newest": "2026-10-18T07:30:58Z"
+    },
+    {
+      "id": "wwr:design",
+      "url": "https://weworkremotely.com/categories/remote-design-jobs.rss",
+      "count": 30,
+      "sha256": "c8ff342378a62283757f53714a34f8bceba3dae6537ceac2df72b09254e21796",
+      "oldest": "2026-08-26T11:52:22Z",
+      "newest": "2026-10-18T07:31:05Z"
+    },
+    {
+      "id": "wwr:devops-sysadmin",
+      "url": "https://weworkremotely.com/categories/remote-devops-sysadmin-jobs.rss",
+      "count": 25,
+      "sha256": "294ef57ca5d001ab2f64d6b66007a41df37bde25043072c296fb03253b398209",
+      "oldest": "2026-09-19T07:31:10Z",
+      "newest": "2026-10-18T07:30:58Z"
+    },
+    {
+      "id": "wwr:other",
+      "url": "https://weworkremotely.com/categories/all-other-remote-jobs.rss",
+      "count": 66,
+      "sha256": "e2b606c1cb71a1159241e3f8194b6a09c856a5b5065109e19ba6e3311bd2ae87",
+      "oldest": "2023-06-21T14:22:59Z",
+      "newest": "2026-10-18T07:30:58Z"
+    },
+    {
+      "id": "nodesk:all",
+      "url": "https://nodesk.co/remote-jobs/index.xml",
+      "count": 10,
+      "sha256": "2db64197fa0983cbe765632b88c8191297997f7e4fd1c53837b87c04d49b552c",
+      "oldest": "2026-10-07T06:00:00Z",
+      "newest": "2026-10-17T01:04:30Z"
+    },
+    {
+      "id": "nodesk:customer-support",
+      "url": "https://nodesk.co/remote-jobs/customer-support/index.xml",
+      "count": 10,
+      "sha256": "177b31f2913760bbe378a1773964b2578473960187e9a74f507bcf2212bbb34b",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-12T08:00:00Z"
+    },
+    {
+      "id": "nodesk:design",
+      "url": "https://nodesk.co/remote-jobs/design/index.xml",
+      "count": 10,
+      "sha256": "4fc509511ca26d8fdd5089a10463d44b4f859755358b77e57236a520e1063e00",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-08T06:00:00Z"
+    },
+    {
+      "id": "nodesk:engineering",
+      "url": "https://nodesk.co/remote-jobs/engineering/index.xml",
+      "count": 10,
+      "sha256": "2544584f9f1603915f912f94efe15f48d802114b6297549320683a4bdc9acce5",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-17T01:04:30Z"
+    },
+    {
+      "id": "nodesk:marketing",
+      "url": "https://nodesk.co/remote-jobs/marketing/index.xml",
+      "count": 10,
+      "sha256": "ccbc4b2c25862368db72b79c3ab3374dc44f63bcba449381256569f644a55ec2",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-08T06:00:00Z"
+    },
+    {
+      "id": "nodesk:operations",
+      "url": "https://nodesk.co/remote-jobs/operations/index.xml",
+      "count": 10,
+      "sha256": "f0011bd66d6ad4ac6471ebd1781d4b3bad655743a37ae4abb4855a492d89887a",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-08T06:00:00Z"
+    },
+    {
+      "id": "nodesk:product",
+      "url": "https://nodesk.co/remote-jobs/product/index.xml",
+      "count": 4,
+      "sha256": "3038747676388b9c9fb571b28114c427b87c5ccd02ef41c1c40c354493cc126e",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-02T06:00:00Z"
+    },
+    {
+      "id": "nodesk:sales",
+      "url": "https://nodesk.co/remote-jobs/sales/index.xml",
+      "count": 10,
+      "sha256": "e6eb420f67d4413b985e6e138f4cfcc2b80b5fb1ded622a5f0cdc344a8c1ac62",
+      "oldest": "2026-10-02T06:00:00Z",
+      "newest": "2026-10-14T16:50:50Z"
+    },
+    {
+      "id": "nodesk:other",
+      "url": "https://nodesk.co/remote-jobs/other/index.xml",
+      "count": 9,
+      "sha256": "bd9cf03bef0cf1a94cd4e4cf26c18e4873f3176580ebbf8629641c5201d15ef3",
+      "oldest": "2026-02-01T06:00:00Z",
+      "newest": "2026-10-14T08:00:00Z"
+    },
+    {
+      "id": "tails:all",
+      "url": "https://tails.net/jobs/index.rss",
+      "count": 0,
+      "sha256": "1c3e7faaf81ceab719a3dc7d278edab72e88c30f29e247c5c1d56b10a2979b97",
+      "oldest": null,
+      "newest": null
+    }
+  ],
+  "comparisons": [
+    {
+      "id": "fossjobs:administrators",
+      "overlap_with_all": 2,
+      "absent_from_all": 8
+    },
+    {
+      "id": "fossjobs:editors",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "fossjobs:marketing",
+      "overlap_with_all": 0,
+      "absent_from_all": 10
+    },
+    {
+      "id": "fossjobs:designers",
+      "overlap_with_all": 0,
+      "absent_from_all": 10
+    },
+    {
+      "id": "fossjobs:managers",
+      "overlap_with_all": 2,
+      "absent_from_all": 8
+    },
+    {
+      "id": "fossjobs:testers",
+      "overlap_with_all": 0,
+      "absent_from_all": 10
+    },
+    {
+      "id": "fossjobs:consultants",
+      "overlap_with_all": 0,
+      "absent_from_all": 10
+    },
+    {
+      "id": "fossjobs:programmers",
+      "overlap_with_all": 3,
+      "absent_from_all": 7
+    },
+    {
+      "id": "fossjobs:researchers",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "fossjobs:translators",
+      "overlap_with_all": 0,
+      "absent_from_all": 3
+    },
+    {
+      "id": "fossjobs:support",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "url": "https://opensourcejobhub.com/rss/?q=zzzznonexistentfeedprobezzzz",
+      "membership_unchanged": true
+    },
+    {
+      "url": "https://opensourcejobhub.com/rss/?categories%5B%5D=System%20Administration",
+      "membership_unchanged": true
+    },
+    {
+      "id": "wwr:customer-support",
+      "overlap_with_all": 10,
+      "absent_from_all": 50
+    },
+    {
+      "id": "wwr:product",
+      "overlap_with_all": 10,
+      "absent_from_all": 13
+    },
+    {
+      "id": "wwr:full-stack-programming",
+      "overlap_with_all": 10,
+      "absent_from_all": 55
+    },
+    {
+      "id": "wwr:back-end-programming",
+      "overlap_with_all": 3,
+      "absent_from_all": 0
+    },
+    {
+      "id": "wwr:front-end-programming",
+      "overlap_with_all": 5,
+      "absent_from_all": 0
+    },
+    {
+      "id": "wwr:programming",
+      "overlap_with_all": 5,
+      "absent_from_all": 19
+    },
+    {
+      "id": "wwr:sales-and-marketing",
+      "overlap_with_all": 10,
+      "absent_from_all": 115
+    },
+    {
+      "id": "wwr:management-and-finance",
+      "overlap_with_all": 10,
+      "absent_from_all": 10
+    },
+    {
+      "id": "wwr:design",
+      "overlap_with_all": 10,
+      "absent_from_all": 20
+    },
+    {
+      "id": "wwr:devops-sysadmin",
+      "overlap_with_all": 10,
+      "absent_from_all": 15
+    },
+    {
+      "id": "wwr:other",
+      "overlap_with_all": 10,
+      "absent_from_all": 56
+    },
+    {
+      "id": "wwr:programming",
+      "back_end_missing": 3
+    },
+    {
+      "id": "nodesk:customer-support",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "nodesk:design",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "nodesk:engineering",
+      "overlap_with_all": 3,
+      "absent_from_all": 7
+    },
+    {
+      "id": "nodesk:marketing",
+      "overlap_with_all": 2,
+      "absent_from_all": 8
+    },
+    {
+      "id": "nodesk:operations",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "nodesk:product",
+      "overlap_with_all": 0,
+      "absent_from_all": 4
+    },
+    {
+      "id": "nodesk:sales",
+      "overlap_with_all": 1,
+      "absent_from_all": 9
+    },
+    {
+      "id": "nodesk:other",
+      "overlap_with_all": 1,
+      "absent_from_all": 8
+    }
+  ],
+  "details": [
+    {
+      "publisher": "fsf",
+      "url": "https://www.fsf.org/resources/jobs/fsf-systems-integration-administrator",
+      "feed_characters": 478,
+      "detail_characters": 6593
+    },
+    {
+      "publisher": "fsf",
+      "url": "https://www.fsf.org/resources/jobs/fsf-engineering-and-certification-manager",
+      "feed_characters": 490,
+      "detail_characters": 5551
+    },
+    {
+      "publisher": "nodesk",
+      "url": "https://nodesk.co/remote-jobs/askable-software-engineer-ai-coding-tasks/",
+      "feed_characters": 511,
+      "detail_characters": 2590
+    },
+    {
+      "publisher": "nodesk",
+      "url": "https://nodesk.co/remote-jobs/zipchat-ai-business-development-representative-uk-remote/",
+      "feed_characters": 644,
+      "detail_characters": 2828
+    }
+  ],
+  "errors": []
+}
