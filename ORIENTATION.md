@@ -5,6 +5,7 @@ DeepSeek handles model calls; Claude Code is development tooling, not a runtime 
 See [README.md](README.md) for architecture and [CLAUDE.md](CLAUDE.md) for development conventions.
 Installation: [guided setup](docs/installation.md) · [verification coverage](docs/setup-verification.md).
 RSS: [verified behavior and limits](docs/rss-feed-verification.md) · [scope and plan](docs/rss-feed-plan.md).
+New websites: [issue → human review → implementation → live verification](docs/website-workflow.md).
 
 - **Entry points:** `it_jobs_poller.py` → disk queue → `it_jobs_triage.py` → `lib/delivery.py`.
   `rss_poller.py` adds RSS/Atom feeds to the same queue; see `feeds.json.example`.
