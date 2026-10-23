@@ -6,6 +6,7 @@ See [README.md](README.md) for architecture and [CLAUDE.md](CLAUDE.md) for devel
 Installation: [guided setup](docs/installation.md) · [verification coverage](docs/setup-verification.md).
 RSS: [verified behavior and limits](docs/rss-feed-verification.md) · [scope and plan](docs/rss-feed-plan.md).
 New websites: [issue → human review → implementation → live verification](docs/website-workflow.md).
+Extractor schema and audit boundary: [shared ingestion contract](docs/website-workflow.md#extractor-contract).
 
 - **Entry points:** `it_jobs_poller.py` → disk queue → `it_jobs_triage.py` → `lib/delivery.py`.
   `rss_poller.py` adds RSS/Atom feeds to the same queue; see `feeds.json.example`.

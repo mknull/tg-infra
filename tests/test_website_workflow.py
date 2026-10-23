@@ -66,7 +66,8 @@ class WorkflowTests(unittest.TestCase):
 
     def test_traversal_symlinks_and_reference_edits_are_forbidden(self):
         for path in ("../core.py", "/tmp/escape.py", "tests/fixtures/websites/examplejobs/../x",
-                     "tests/fixtures/websites/examplejobs/reference.json", ".git/config", "lib/api.py"):
+                     "tests/fixtures/websites/examplejobs/reference.json", ".git/config", "lib/api.py",
+                     "lib/job_ingestion.py"):
             with self.subTest(path=path), self.assertRaises(workflow.ScopeViolation):
                 workflow.check_changes(self.repo, self.state, [{"path": path, "content": "x", "rationale": "x"}])
         target = self.repo / "tests/fixtures/websites/examplejobs"

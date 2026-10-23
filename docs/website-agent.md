@@ -30,6 +30,8 @@ existing RSS catalogue and setup. Use the website's supported categories and
 filters; preserve sufficient job text and geography for triage. Reuse existing
 polling, queue identity, retry, audit and delivery. Do not tune the shared models,
 prompts or runtime code to make this website pass. No new dependencies.
+The job contract and lifecycle in lib/job_ingestion.py are protected shared code;
+reuse them through the existing RSS path. Its contract tests run before live evaluation.
 
 Return ONLY valid JSON:
 {

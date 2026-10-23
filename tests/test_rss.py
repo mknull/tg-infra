@@ -16,6 +16,7 @@ import bot_commands
 import it_jobs_triage as triage
 import lib.delivery as delivery
 import rss_poller as rss
+import lib.job_ingestion as ingestion
 import weekly_trend
 from lib import SeenLedger, TransportError
 from lib.sources import load_feeds
@@ -152,7 +153,7 @@ class TestIngestion(_FeedState):
         # The persistent index, not a short-lived processing ledger, gates ingestion.
         for path in self.queue():
             path.unlink()
-        with patch.object(rss, "_now", return_value="2027-01-01T00:00:00Z"):
+        with patch.object(ingestion, "_now", return_value="2027-01-01T00:00:00Z"):
             self.assertEqual(self.poll()["queued"], 0)
         self.assertEqual(self.queue(), [])
         after = json.loads(self.index.read_text())
@@ -185,12 +186,12 @@ class TestIngestion(_FeedState):
             self.assertFalse(json.loads(self.status.read_text())["ok"])
 
     def test_checkpoint_failure_recovers_without_duplicate_arrivals(self):
-        original = rss._write_json
+        original = ingestion._write_json
         def fail_index(path, value):
             if path == self.index:
                 raise OSError("checkpoint interrupted")
             original(path, value)
-        with patch.object(rss, "_write_json", side_effect=fail_index), self.assertRaises(OSError):
+        with patch.object(ingestion, "_write_json", side_effect=fail_index), self.assertRaises(OSError):
             self.poll()
         self.assertEqual(len(self.queue()), 2)
         # Simulate triage completing before the collector can checkpoint.
@@ -202,12 +203,12 @@ class TestIngestion(_FeedState):
         self.assertEqual(len((self.state / "audit" / "rss.jsonl").read_text().splitlines()), 2)
 
     def test_failed_queue_write_does_not_checkpoint(self):
-        original = rss.atomic_write
+        original = ingestion.atomic_write
         def fail_queue(path, data):
             if path.parent.name == "message_queue":
                 raise OSError("disk full")
             original(path, data)
-        with patch.object(rss, "atomic_write", side_effect=fail_queue), self.assertRaises(OSError):
+        with patch.object(ingestion, "atomic_write", side_effect=fail_queue), self.assertRaises(OSError):
             self.poll()
         self.assertFalse(self.index.exists())
         self.assertEqual(self.poll()["queued"], 2)

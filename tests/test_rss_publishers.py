@@ -5,7 +5,8 @@ from pathlib import Path
 
 from lib.rss_catalog import load_catalog
 from lib.rss_details import extract_detail
-from rss_poller import parse_feed, plain_text, _selected
+from rss_poller import parse_feed, plain_text
+from lib.job_ingestion import _selected
 
 FIXTURES = Path(__file__).parent / "fixtures/publishers"
 

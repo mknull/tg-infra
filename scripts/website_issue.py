@@ -358,7 +358,8 @@ def verify(args):
         (copy / "state").mkdir(exist_ok=True)
         (copy / "state/channels.json").write_bytes((copy / "channels.json.example").read_bytes())
         env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL", "TZ")}
-        result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_rss", "tests.test_rss_e2e",
+        result = subprocess.run([sys.executable, "-m", "unittest", "tests.test_job_ingestion",
+                                 "tests.test_rss", "tests.test_rss_e2e", "tests.test_rss_audit", "tests.test_rss_subscriptions",
                                  "tests.test_rss_publishers", "tests.test_rss_selection", "tests.test_system_setup",
                                  f"tests.test_website_{state['site']}"], cwd=copy, env=env,
                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)

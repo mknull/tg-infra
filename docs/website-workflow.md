@@ -103,6 +103,8 @@ its catalogue entry, and specifically approved setup files. Current ingestion
 supports RSS/Atom with existing parsing options and two detail-page extractors.
 A website requiring a new shared parser, dependency, scheduler, or triage change
 is rejected under this boundary. Broader support requires a separate task.
+The shared [extractor contract](#extractor-contract) and ingestion code are also
+protected from changes by individual website issues.
 
 A forbidden proposal or tool attempt is a rejection, even if later reverted.
 `proposal.json` records file content and stated rationale; agent transcripts
@@ -116,6 +118,36 @@ Review the patch and tests. A failed verification can be followed by another
 `develop` invocation with the **same** approval to produce another checked commit.
 Each invocation has a default development budget of $5 (`assess`: $3), adjustable
 with `--budget`; these are runner budgets, not DeepSeek evaluation budgets.
+
+## Extractor contract
+
+The current RSS/Atom integrations use [shared ingestion](../lib/job_ingestion.py).
+Extraction returns a list of ordinary job dictionaries:
+
+| Field | Contract |
+| --- | --- |
+| `source_id` | Nonempty string: the website's stable posting ID, unique within the extraction. |
+| `url` | HTTP(S) posting URL. |
+| `title`, `content` | Nonempty strings; preserve the job text needed for triage. |
+| `posted_at` | Optional timezone-aware ISO timestamp; unknown dates remain `null`. |
+| `categories` | Optional list of nonempty strings; defaults to `[]`. |
+
+Shared ingestion validates the whole extraction before queueing and computes
+`content_hash` from the exact content. Empty results require the existing explicit
+`allow_empty` setting. Required detail extraction uses the same job contract and
+must preserve `source_id` and `url`; failures retain the original job for retry.
+Structural validation does not establish that the text is complete or relevant.
+
+The shared path owns IDs, revisions, deduplication, queueing, poll status, observed
+job dispositions and arrival records. Existing `rss-*` IDs, `state/rss/` files and
+`audit/rss.jsonl` records remain compatible with triage and audit. No migration is
+needed. Audit checks collection → processing → delivery; policy, relevance and
+unseen-job coverage remain the human-gated evaluation's responsibility.
+
+Supported websites remain RSS/Atom plus the existing FSF/NoDesk detail parsers.
+No extractor registry or additional website types are introduced. Website
+verification runs the contract, subscription and audit regressions before paid
+live evaluation; the per-issue edit allowlist is unchanged.
 
 ## 4. Approve and run live verification
 
