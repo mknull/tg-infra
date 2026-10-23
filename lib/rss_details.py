@@ -8,6 +8,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .job_ingestion import normalize_job
+
 
 class _Details(HTMLParser):
     def __init__(self):
@@ -110,4 +112,4 @@ def enrich_item(item: dict, parser: str, cache: Path, fetch, plain_text) -> dict
         finally:
             Path(temporary).unlink(missing_ok=True)
     content = item["content"] + "\n\nFull description:\n" + description
-    return {**item, "content": content, "content_hash": hashlib.sha256(content.encode()).hexdigest()}
+    return normalize_job({**item, "content": content})

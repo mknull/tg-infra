@@ -10,6 +10,7 @@ from unittest.mock import patch
 from xml.etree import ElementTree
 
 import rss_poller as rss
+import lib.job_ingestion as ingestion
 from lib.rss_audit import check_rss_health
 from lib.sources import validate_feeds
 
@@ -43,7 +44,7 @@ class TestSubscriptions(unittest.TestCase):
         self.responses = {s["url"]: xml() for s in self.feed["subscriptions"]}
         self.calls = []
         self.addCleanup(patch.stopall)
-        patch.object(rss, "_now", return_value=NOW).start()
+        patch.object(ingestion, "_now", return_value=NOW).start()
         patch.object(rss.time, "sleep").start()
         patch.object(rss, "fetch_feed", side_effect=self.fetch).start()
 
@@ -138,7 +139,7 @@ class TestSubscriptions(unittest.TestCase):
     def test_each_subscription_obeys_its_cadence_and_config_changes_refetch(self):
         self.poll()
         self.calls.clear()
-        with patch.object(rss, "_now", return_value="2026-10-18T14:00:00Z"):
+        with patch.object(ingestion, "_now", return_value="2026-10-18T14:00:00Z"):
             self.poll(respect_cadence=True)
         self.assertEqual([u for u, _ in self.calls], [self.feed["subscriptions"][0]["url"]])
         self.calls.clear()
@@ -168,12 +169,12 @@ class TestSubscriptions(unittest.TestCase):
 
     def test_failed_publisher_checkpoint_does_not_commit_future_only_baseline(self):
         feed = {**self.feed, "backfill": {"mode": "future"}}
-        original = rss._write_json
+        original = ingestion._write_json
         def interrupted(path, value):
             if path == self.state / "rss/fixture/index.json":
                 raise OSError("interrupted")
             original(path, value)
-        with patch.object(rss, "_write_json", side_effect=interrupted), self.assertRaises(OSError):
+        with patch.object(ingestion, "_write_json", side_effect=interrupted), self.assertRaises(OSError):
             self.poll(feed)
         self.assertFalse((self.state / "rss/fixture/subscriptions/a/index.json").exists())
         self.assertEqual(self.poll(feed)["queued"], 0)
@@ -205,7 +206,7 @@ class TestSubscriptions(unittest.TestCase):
             url = f"https://nodesk.co/remote-jobs/example-{i}/"
             self.responses[sub["url"]] = xml(guid=str(i), link=url)
             self.responses[url] = DETAIL
-        with patch.object(rss, "MAX_DETAIL_FETCHES", 1), self.assertRaises(ValueError):
+        with patch.object(ingestion, "MAX_DETAIL_FETCHES", 1), self.assertRaises(ValueError):
             self.poll()
         self.assertEqual(len(self.queue()), 1)
         self.assertEqual(self.poll()["queued"], 1)
